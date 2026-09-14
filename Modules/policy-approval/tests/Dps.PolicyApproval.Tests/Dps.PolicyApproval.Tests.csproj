@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>Dps.PolicyApproval.Tests</AssemblyName><RootNamespace>Dps.PolicyApproval.Tests</RootNamespace><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="xunit.v3" />
+    <ProjectReference Include="../../src/Dps.PolicyApproval/Dps.PolicyApproval.csproj" />
+    <Content Include="../../migrations/004_create_native_stop_challenge_ledger.sql"
+             Link="proposed-migrations/004_create_native_stop_challenge_ledger.sql"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
