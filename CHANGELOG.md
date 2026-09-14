@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Recoverable source preservation
+
+- Preserve the current source snapshot in four scoped local commits. Existing legacy C# bytes, the 79-file baseline and the 4+8+9 closed repair sets are unchanged by this preservation work.
+- Correct Git normalization for 14 existing config, documentation and PowerShell paths so ordinary staging and checkout preserve their original bytes. Keep normalization rules for new modern files. Limit CRLF whitespace recognition to the existing legacy C# paths and retain trailing-space, blank-EOF and space-before-tab checks.
+- Add real Git commit/checkout and whitespace regressions to the existing Phase 0 test discovery. Before the attribute fix, 3 tests exposed 15 failed subcases; after the fix, all 3 tests pass. These are local regression results, not a Phase 0 PASS or a formally issued verification level. External legacy anchor, Windows and device evidence remain pending.
+
 ### Agent instruction clarification
 
 - 根 AGENTS 和工程标准区分检查结果、验证上限与正式等级签发，明确 Hosted CI、Phase 0 diagnostic 和 unsigned Candidate 的证据边界。

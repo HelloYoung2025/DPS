@@ -13,15 +13,15 @@ zenno/**/*.cs text eol=lf
 # Existing ZennoDroid C# contains LF, CRLF, and mixed line endings. Keep these
 # narrow legacy rules after modern rules so old bytes are never normalized and
 # registered module src/tests remain LF text.
-Core/*.cs -text
-Core/**/*.cs -text
-Modules/*.cs -text
-Modules/Core/*.cs -text
-Modules/Core/**/*.cs -text
-ZDProjects/*.cs -text
-ZDProjects/**/*.cs -text
-Extensions/*.cs -text
-Extensions/**/*.cs -text
+Core/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Core/**/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Modules/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Modules/Core/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Modules/Core/**/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+ZDProjects/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+ZDProjects/**/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Extensions/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+Extensions/**/*.cs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 
 *.json text eol=lf
 *.yaml text eol=lf
@@ -31,6 +31,23 @@ Extensions/**/*.cs -text
 *.js text eol=lf
 *.sh text eol=lf
 *.ps1 text eol=crlf
+
+# Existing non-C# byte streams predate these normalization rules. Preserve
+# these exact paths on ordinary add/checkout; new files keep the rules above.
+Config/Apps.json -text
+Config/BehaviorConfig.json -text
+Config/EvolutionRules.json -text
+Config/ExtensionsConfig.json -text
+Config/MaintenanceConfig.json -text
+Config/StageConfig.json -text
+Config/ValidationRules.json -text
+Core/README.md -text
+Modules/Decision/README.md -text
+Modules/Persona/README.md -text
+Modules/README.md -text
+Modules/Report/README.md -text
+ZDProjects/README.md -text
+Modules/zenno-bridge/tests/Invoke-WindowsZennoGate.ps1 -text
 
 *.droid binary
 *.png binary
