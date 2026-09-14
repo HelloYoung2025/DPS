@@ -25,7 +25,7 @@ public sealed record MemoryAppendRequestV2(
 
     public void Validate()
     {
-        MemoryContractValidationV2.RequireMajor(SchemaVersion, 2);
+        MemoryContractValidationV2.RequireExact(SchemaVersion, CurrentSchemaVersion, nameof(SchemaVersion));
         MemoryContractValidationV2.RequireExact(ContractId, CurrentContractId, nameof(ContractId));
         MemoryContractValidationV2.RequireExact(ProducerModule, CurrentProducerModule, nameof(ProducerModule));
         MemoryContractValidationV2.RequireNonEmpty(EventId, nameof(EventId));

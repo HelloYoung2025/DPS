@@ -150,7 +150,7 @@ public sealed record MemoryEventV2(
 
     public void Validate()
     {
-        MemoryContractValidationV2.RequireMajor(SchemaVersion, 2);
+        MemoryContractValidationV2.RequireExact(SchemaVersion, CurrentSchemaVersion, nameof(SchemaVersion));
         MemoryContractValidationV2.RequireExact(ContractId, CurrentContractId, nameof(ContractId));
         MemoryContractValidationV2.RequireExact(ProducerModule, CurrentProducerModule, nameof(ProducerModule));
         MemoryContractValidationV2.RequireNonEmpty(EventId, nameof(EventId));
@@ -214,6 +214,8 @@ public static class MemorySignalCanonicalizerV2
 public static class MemoryEventCanonicalizerV2
 {
     public const int MaximumCanonicalBytes = 65_536;
+    // Envelope, observation and authority objects have 39 properties; each signal adds three.
+    private const int MaximumPropertyCount = 39 + 3 * MemoryObservationV2.MaximumInterestSignals;
     private static readonly JsonSerializerOptions StrictSerializerOptions = new()
     {
         PropertyNamingPolicy = null,
@@ -276,7 +278,7 @@ public static class MemoryEventCanonicalizerV2
     {
         if (raw.Length is 0 or > MaximumCanonicalBytes)
             throw new JsonException("MemoryEvent v2 raw bytes are empty or exceed the bounded size.");
-        MemoryContractValidationV2.ValidateJsonShape(raw, maximumDepth: 12, maximumPropertyCount: 128);
+        MemoryContractValidationV2.ValidateJsonShape(raw, maximumDepth: 12, maximumPropertyCount: MaximumPropertyCount);
         var parsed = JsonSerializer.Deserialize<MemoryEventV2>(raw, StrictSerializerOptions)
             ?? throw new JsonException("MemoryEvent v2 is null.");
         var canonical = MemoryContractValidationV2.StrictUtf8.GetBytes(Serialize(parsed));

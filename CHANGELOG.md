@@ -1334,3 +1334,9 @@ Backups/
 - 每日/每周更新
 
 ---
+
+## 2026-09-14 P11 DTO local integration
+
+- Integrate the five exact DTO boundary candidate files from d798c4c2d763673549fc6757a512349bf603e70b onto b0155df6c320cd5fb542a4e4b55005917dd82847. Enforce exact 2.0.0 versions and canonical round-trips through 32 interest signals; retain v1 quarantine and capability checks.
+- This local six-file integration includes this appended entry. Independent artifact builds, original Memory Unit/Contract commands, and environment evidence are bound separately to the exact candidate. No prior test result is inherited.
+- P11 remains PARTIAL: the two previously reported PostgreSQL failures, unfinished production authority and Outbox path, and unresolved consumer compatibility remain open. Production composition remains WAITING_EXTERNAL. No central gate, protected merge, Owner acceptance, formal verification level, or deployment is claimed.
