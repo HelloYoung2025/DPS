@@ -62,6 +62,8 @@ public sealed record SoulRegistryOptions(
 {
     private static readonly Regex SchemaPattern = new("^[a-z][a-z0-9_]{0,62}\\z", RegexOptions.CultureInvariant);
 
+    public IReadOnlyList<IReadOnlyList<string>> LegacyReceiptHashKeySets { get; init; } = [];
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(ConnectionString))
@@ -88,6 +90,16 @@ public sealed record SoulRegistryOptions(
         if (!AliasKeys.Any(key => string.Equals(key.KeyId, CurrentKeyId, StringComparison.Ordinal)))
         {
             throw new ArgumentException("CurrentKeyId must identify an active alias HMAC key.", nameof(CurrentKeyId));
+        }
+
+        ArgumentNullException.ThrowIfNull(LegacyReceiptHashKeySets);
+        var knownKeyIds = AliasKeys.Select(static key => key.KeyId).ToHashSet(StringComparer.Ordinal);
+        foreach (var keySet in LegacyReceiptHashKeySets)
+        {
+            if (keySet is null || keySet.Count == 0 || keySet.Count > knownKeyIds.Count ||
+                keySet.Any(keyId => keyId is null || !knownKeyIds.Contains(keyId)) ||
+                keySet.Distinct(StringComparer.Ordinal).Count() != keySet.Count)
+                throw new ArgumentException("Historical receipt hash key sets must contain distinct retained key IDs.", nameof(LegacyReceiptHashKeySets));
         }
     }
 
@@ -177,6 +189,7 @@ public sealed class AliasRevokedException() : SoulRegistryException("The verifie
 public sealed class AmbiguousAliasException() : SoulRegistryException("The verified identity alias is ambiguous.");
 public sealed class AliasConflictException() : SoulRegistryException("The verified identity alias belongs to a different Soul.");
 public sealed class IdempotencyConflictException() : SoulRegistryException("The idempotency key was reused for a different identity request.");
+public sealed class ReceiptHashBasisUnavailableException() : SoulRegistryException("The recorded identity request hash basis is unavailable or unsupported.");
 public sealed class CrossTenantIdentityException() : SoulRegistryException("The Soul does not belong to the requested tenant.");
 
 internal readonly record struct AliasReference(string Kind, string Digest, string KeyId);

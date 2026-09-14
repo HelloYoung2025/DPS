@@ -135,4 +135,30 @@ public sealed class SoulRegistryUnitTests
         using var key = new AliasHmacKey(keyId, Enumerable.Repeat(fill, 32).ToArray());
         return new PostgresSoulRegistry(new SoulRegistryOptions("Host=unused", "soul_test", keyId, [key]));
     }
+
+    [Theory]
+    [InlineData("missing-history")]
+    [InlineData("null-set")]
+    [InlineData("empty-set")]
+    [InlineData("missing-key")]
+    [InlineData("unknown-key")]
+    [InlineData("duplicate-key")]
+    [Trait("Category", "Unit")]
+    public void HistoricalHashBasisMustContainDistinctRetainedKeys(string invalidCase)
+    {
+        using var key = new AliasHmacKey("key-v1", Enumerable.Repeat((byte)0x21, 32).ToArray());
+        IReadOnlyList<IReadOnlyList<string>> history = invalidCase switch
+        {
+            "missing-history" => null!,
+            "null-set" => [null!],
+            "empty-set" => [Array.Empty<string>()],
+            "missing-key" => [new string[] { null! }],
+            "unknown-key" => [new[] { "unknown" }],
+            "duplicate-key" => [new[] { "key-v1", "key-v1" }],
+            _ => throw new ArgumentOutOfRangeException(nameof(invalidCase))
+        };
+        var options = new SoulRegistryOptions("Host=unused", "soul_test", "key-v1", [key])
+            { LegacyReceiptHashKeySets = history };
+        Assert.ThrowsAny<ArgumentException>(() => new PostgresSoulRegistry(options));
+    }
 }

@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Dps.SoulRegistry.Tests;
 
-public sealed class PostgresSoulRegistryIntegrationTests
+public sealed partial class PostgresSoulRegistryIntegrationTests
 {
     private static readonly DateTimeOffset BaseTime = new(2026, 7, 14, 3, 0, 0, TimeSpan.Zero);
 
@@ -41,6 +41,48 @@ public sealed class PostgresSoulRegistryIntegrationTests
             TestContext.Current.CancellationToken);
         Assert.Equal(soulId, linked.SoulId);
         Assert.Equal(2, (await rotatedRegistry.ExportAliasMetadataAsync("tenant-a", soulId, TestContext.Current.CancellationToken)).Count);
+    }
+
+    [Theory]
+    [InlineData("register")]
+    [InlineData("resolve")]
+    [InlineData("revoke")]
+    [Trait("Category", "Integration")]
+    public async Task KeyRotationReplaysSameReceiptWithoutChangingStoredFacts(string operation)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        using var originalRegistry = database.CreateRegistry("key-v1", Key("key-v1", 0x21));
+        await originalRegistry.InitializeAsync(TestContext.Current.CancellationToken);
+        var registration = Register("rotation.replay@example.test", "rotation-register");
+        var expected = await originalRegistry.RegisterVerifiedAliasAsync(registration, TestContext.Current.CancellationToken);
+        var resolution = Resolve(registration.RawAlias, "rotation-resolve");
+        var revocation = Revoke(registration.RawAlias, expected.SoulId, "rotation-revoke", "verified correction");
+        if (operation == "resolve")
+            expected = await originalRegistry.ResolveAsync(resolution, TestContext.Current.CancellationToken);
+        if (operation == "revoke")
+            await originalRegistry.RevokeAliasAsync(revocation, TestContext.Current.CancellationToken);
+        var storedBeforeReplay = await database.ReadStoredRowsAsync();
+
+        using var rotatedRegistry = database.CreateRegistry("key-v2", Key("key-v1", 0x21), Key("key-v2", 0x22));
+        if (operation == "register")
+        {
+            Assert.Equal(expected, await rotatedRegistry.RegisterVerifiedAliasAsync(registration, TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<IdempotencyConflictException>(() => rotatedRegistry.RegisterVerifiedAliasAsync(
+                registration with { RawAlias = "different@example.test" }, TestContext.Current.CancellationToken));
+        }
+        else if (operation == "resolve")
+        {
+            Assert.Equal(expected, await rotatedRegistry.ResolveAsync(resolution, TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<IdempotencyConflictException>(() => rotatedRegistry.ResolveAsync(
+                resolution with { RawAlias = "different@example.test" }, TestContext.Current.CancellationToken));
+        }
+        else
+        {
+            await rotatedRegistry.RevokeAliasAsync(revocation, TestContext.Current.CancellationToken);
+            await Assert.ThrowsAsync<IdempotencyConflictException>(() => rotatedRegistry.RevokeAliasAsync(
+                revocation with { Reason = "different correction" }, TestContext.Current.CancellationToken));
+        }
+        Assert.Equal(storedBeforeReplay, await database.ReadStoredRowsAsync());
     }
 
     [Fact]

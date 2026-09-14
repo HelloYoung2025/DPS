@@ -27,6 +27,22 @@ internal sealed class AliasDigester : IDisposable
         return _keys.Select(key => ComputeReference(key, tenantId, kind, canonical)).ToArray();
     }
 
+    public IReadOnlyList<AliasReference> ReferencesForKeys(
+        string tenantId, IdentityAliasKind kind, string rawAlias, IReadOnlyList<string> keyIds)
+    {
+        if (keyIds.Count == 0 || keyIds.Count > _keys.Count ||
+            keyIds.Any(static keyId => keyId is null) ||
+            keyIds.Distinct(StringComparer.Ordinal).Count() != keyIds.Count)
+            throw new ReceiptHashBasisUnavailableException();
+        var canonical = Normalize(kind, rawAlias);
+        return keyIds.Order(StringComparer.Ordinal).Select(keyId =>
+        {
+            var key = _keys.SingleOrDefault(item => string.Equals(item.KeyId, keyId, StringComparison.Ordinal))
+                ?? throw new ReceiptHashBasisUnavailableException();
+            return ComputeReference(key, tenantId, kind, canonical);
+        }).ToArray();
+    }
+
     private static AliasReference ComputeReference(
         KeyEntry key,
         string tenantId,

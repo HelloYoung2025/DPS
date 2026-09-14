@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Soul receipt replay across alias-key rotation
+
+- Record versioned request-hash key metadata on new Soul resolution and revocation receipts. Replay uses the recorded key while alias lookup may add newer keys; unchanged requests return the original receipt and changed requests remain conflicts.
+- Add an append-only compatible migration without rewriting old request hashes or result fields. Legacy receipts verify only against the exact current key set or an explicitly configured complete historical set. Retain old verification keys, stop old writers before v2 writes, and require a v2-compatible rollback binary or forward fix.
+- Preserve ten native synthetic golden files exported by the old production implementation, including old two-key receipts whose result still names one key. Add rotation, historical-key, missing-key, changed-content and immutable-metadata regressions. No public contract, dependency lock or legacy runtime bytes changed.
+- Local locked restore/build, 14 unit and 7 contract cases pass. All 21 real PostgreSQL integration cases run: 20 pass and the existing P11 Soul-to-Ledger v1 positive path still fails. Compiled-MTP diagnostics do not replace the original Manifest frontend, whose Unit attempt timed out as INFRA_ERROR. Final independent QA and remaining P05 authority/integration work are pending; this slice does not claim a package PASS or formal verification level.
+
 ### Mechanical build preparation
 
 - Add the existing Factory Release Controller contract project to `Dps.slnx`; the solution now declares all 68 existing projects without adding a module.

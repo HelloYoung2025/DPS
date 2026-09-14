@@ -9,7 +9,8 @@ namespace Dps.SoulRegistry;
 
 public sealed class PostgresSoulRegistry : IDisposable
 {
-    private const string MigrationResourceSuffix = "001_create_soul_registry.sql";
+    private static readonly string[] MigrationResourceSuffixes =
+        ["001_create_soul_registry.sql", "002_record_receipt_hash_basis.sql"];
     private readonly SoulRegistryOptions _options;
     private readonly AliasDigester _digester;
     private readonly SoulRegistryFaultInjector? _faultInjector;
@@ -20,7 +21,11 @@ public sealed class PostgresSoulRegistry : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        _options = options;
+        _options = options with
+        {
+            LegacyReceiptHashKeySets = options.LegacyReceiptHashKeySets
+                .Select(static keySet => (IReadOnlyList<string>)keySet.ToArray()).ToArray()
+        };
         _digester = new AliasDigester(options);
         _faultInjector = faultInjector;
     }
@@ -28,17 +33,22 @@ public sealed class PostgresSoulRegistry : IDisposable
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         var assembly = typeof(PostgresSoulRegistry).Assembly;
-        var resourceName = assembly.GetManifestResourceNames()
-            .Single(name => name.EndsWith(MigrationResourceSuffix, StringComparison.Ordinal));
-        await using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException("The Soul Registry migration resource was not found.");
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var migration = await reader.ReadToEndAsync(cancellationToken);
-        migration = migration.Replace("__SCHEMA__", _options.SchemaName, StringComparison.Ordinal);
-
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(migration, connection);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await AcquireLockAsync(connection, transaction, $"soul-registry:migrate:{_options.SchemaName}", cancellationToken);
+        foreach (var suffix in MigrationResourceSuffixes)
+        {
+            var resourceName = assembly.GetManifestResourceNames()
+                .Single(name => name.EndsWith(suffix, StringComparison.Ordinal));
+            await using var stream = assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException("The Soul Registry migration resource was not found.");
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var migration = await reader.ReadToEndAsync(cancellationToken);
+            migration = migration.Replace("__SCHEMA__", _options.SchemaName, StringComparison.Ordinal);
+            await using var command = new NpgsqlCommand(migration, connection, transaction);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<SoulResolved> RegisterVerifiedAliasAsync(
@@ -49,10 +59,10 @@ public sealed class PostgresSoulRegistry : IDisposable
         ValidateRegistration(request);
         var references = _digester.AllReferences(request.TenantId, request.AliasKind, request.RawAlias);
         var currentReference = _digester.CurrentReference(request.TenantId, request.AliasKind, request.RawAlias);
-        var requestHash = ComputeRequestHash(
+        string HashRequest(IReadOnlyList<AliasReference> hashReferences) => ComputeRequestHash(
             "register",
             request.TenantId,
-            references,
+            hashReferences,
             request.DeviceBindingId,
             request.PlatformAccountId,
             request.TraceId,
@@ -68,7 +78,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         var receipt = await ReadReceiptAsync(connection, transaction, request.TenantId, request.IdempotencyKey, cancellationToken);
         if (receipt is not null)
         {
-            EnsureSameRequest(receipt, requestHash, "register");
+            EnsureSameRequest(receipt, "register", request.TenantId, request.AliasKind, request.RawAlias, HashRequest);
             await transaction.CommitAsync(cancellationToken);
             return receipt.ToContract();
         }
@@ -116,6 +126,7 @@ public sealed class PostgresSoulRegistry : IDisposable
             request.IdempotencyKey,
             request.OccurredAt,
             resolvedReference);
+        var requestHash = Version2Hash("resolution", HashRequest([currentReference]));
         await InsertReceiptAsync(connection, transaction, request.TenantId, "register", requestHash, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
@@ -128,10 +139,10 @@ public sealed class PostgresSoulRegistry : IDisposable
         ArgumentNullException.ThrowIfNull(request);
         ValidateResolve(request);
         var references = _digester.AllReferences(request.TenantId, request.AliasKind, request.RawAlias);
-        var requestHash = ComputeRequestHash(
+        string HashRequest(IReadOnlyList<AliasReference> hashReferences) => ComputeRequestHash(
             "resolve",
             request.TenantId,
-            references,
+            hashReferences,
             request.DeviceBindingId,
             request.PlatformAccountId,
             request.TraceId,
@@ -146,7 +157,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         var receipt = await ReadReceiptAsync(connection, transaction, request.TenantId, request.IdempotencyKey, cancellationToken);
         if (receipt is not null)
         {
-            EnsureSameRequest(receipt, requestHash, "resolve");
+            EnsureSameRequest(receipt, "resolve", request.TenantId, request.AliasKind, request.RawAlias, HashRequest);
             await transaction.CommitAsync(cancellationToken);
             return receipt.ToContract();
         }
@@ -183,6 +194,8 @@ public sealed class PostgresSoulRegistry : IDisposable
             request.IdempotencyKey,
             request.OccurredAt,
             new AliasReference(selected.AliasKind, selected.AliasDigest, selected.AliasKeyId));
+        var currentReference = _digester.CurrentReference(request.TenantId, request.AliasKind, request.RawAlias);
+        var requestHash = Version2Hash("resolution", HashRequest([currentReference]));
         await InsertReceiptAsync(connection, transaction, request.TenantId, "resolve", requestHash, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
@@ -195,7 +208,6 @@ public sealed class PostgresSoulRegistry : IDisposable
         ArgumentNullException.ThrowIfNull(request);
         ValidateRevoke(request);
         var references = _digester.AllReferences(request.TenantId, request.AliasKind, request.RawAlias);
-        var requestHash = ComputeMutationHash(request, references);
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
@@ -209,11 +221,14 @@ public sealed class PostgresSoulRegistry : IDisposable
         if (existingReceipt is not null)
         {
             if (!string.Equals(existingReceipt.Operation, "revoke", StringComparison.Ordinal) ||
-                !string.Equals(existingReceipt.EntityId, request.ExpectedSoulId, StringComparison.Ordinal) ||
-                !SecretComparison.EqualsHex(existingReceipt.RequestHash, requestHash))
+                !string.Equals(existingReceipt.EntityId, request.ExpectedSoulId, StringComparison.Ordinal))
             {
                 throw new IdempotencyConflictException();
             }
+
+            EnsureSameHash(existingReceipt.RequestHash, existingReceipt.HashVersion, existingReceipt.HashKeyIds,
+                request.TenantId, request.AliasKind, request.RawAlias,
+                hashReferences => ComputeMutationHash(request, hashReferences), "mutation");
 
             await transaction.CommitAsync(cancellationToken);
             return;
@@ -260,6 +275,8 @@ public sealed class PostgresSoulRegistry : IDisposable
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        var currentReference = _digester.CurrentReference(request.TenantId, request.AliasKind, request.RawAlias);
+        var requestHash = Version2Hash("mutation", ComputeMutationHash(request, [currentReference]));
         await InsertMutationReceiptAsync(connection, transaction, request, requestHash, cancellationToken);
         if (_faultInjector is not null)
         {
@@ -496,7 +513,8 @@ public sealed class PostgresSoulRegistry : IDisposable
         await using var command = new NpgsqlCommand(
             $"""
             SELECT operation, request_sha256, soul_id, device_binding_id, platform_account_id,
-                   trace_id, idempotency_key, occurred_at, alias_kind, alias_digest, alias_key_id
+                   trace_id, idempotency_key, occurred_at, alias_kind, alias_digest, alias_key_id,
+                   request_hash_version, request_hash_key_ids
             FROM {_options.SchemaName}.resolution_receipts
             WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key
             """,
@@ -521,7 +539,9 @@ public sealed class PostgresSoulRegistry : IDisposable
             reader.GetFieldValue<DateTimeOffset>(7).ToUniversalTime(),
             reader.GetString(8),
             reader.GetString(9),
-            reader.GetString(10));
+            reader.GetString(10),
+            reader.GetInt32(11),
+            reader.IsDBNull(12) ? null : reader.GetFieldValue<string[]>(12));
     }
 
     private async Task InsertReceiptAsync(
@@ -538,11 +558,11 @@ public sealed class PostgresSoulRegistry : IDisposable
             INSERT INTO {_options.SchemaName}.resolution_receipts
                 (tenant_id, idempotency_key, operation, request_sha256, soul_id,
                  device_binding_id, platform_account_id, trace_id, occurred_at,
-                 alias_kind, alias_digest, alias_key_id)
+                 alias_kind, alias_digest, alias_key_id, request_hash_version, request_hash_key_ids)
             VALUES
                 (@tenant_id, @idempotency_key, @operation, @request_sha256, @soul_id,
                  @device_binding_id, @platform_account_id, @trace_id, @occurred_at,
-                 @alias_kind, @alias_digest, @alias_key_id)
+                 @alias_kind, @alias_digest, @alias_key_id, 2, @hash_key_ids)
             """,
             connection,
             transaction);
@@ -558,6 +578,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         command.Parameters.AddWithValue("alias_kind", result.AliasKind);
         command.Parameters.AddWithValue("alias_digest", result.AliasDigest);
         command.Parameters.AddWithValue("alias_key_id", result.AliasKeyId);
+        command.Parameters.AddWithValue("hash_key_ids", new[] { _options.CurrentKeyId });
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -570,7 +591,7 @@ public sealed class PostgresSoulRegistry : IDisposable
     {
         await using var command = new NpgsqlCommand(
             $"""
-            SELECT operation, request_sha256, entity_id
+            SELECT operation, request_sha256, entity_id, request_hash_version, request_hash_key_ids
             FROM {_options.SchemaName}.mutation_receipts
             WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key
             """,
@@ -580,7 +601,8 @@ public sealed class PostgresSoulRegistry : IDisposable
         command.Parameters.AddWithValue("idempotency_key", idempotencyKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new MutationReceiptRow(reader.GetString(0), reader.GetString(1), reader.GetString(2))
+            ? new MutationReceiptRow(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetInt32(3), reader.IsDBNull(4) ? null : reader.GetFieldValue<string[]>(4))
             : null;
     }
 
@@ -594,9 +616,11 @@ public sealed class PostgresSoulRegistry : IDisposable
         await using var command = new NpgsqlCommand(
             $"""
             INSERT INTO {_options.SchemaName}.mutation_receipts
-                (tenant_id, idempotency_key, operation, request_sha256, entity_id, trace_id, occurred_at)
+                (tenant_id, idempotency_key, operation, request_sha256, entity_id, trace_id, occurred_at,
+                 request_hash_version, request_hash_key_ids)
             VALUES
-                (@tenant_id, @idempotency_key, 'revoke', @request_sha256, @entity_id, @trace_id, @occurred_at)
+                (@tenant_id, @idempotency_key, 'revoke', @request_sha256, @entity_id, @trace_id, @occurred_at,
+                 2, @hash_key_ids)
             """,
             connection,
             transaction);
@@ -604,19 +628,54 @@ public sealed class PostgresSoulRegistry : IDisposable
         command.Parameters.AddWithValue("idempotency_key", request.IdempotencyKey);
         command.Parameters.AddWithValue("request_sha256", requestHash);
         command.Parameters.AddWithValue("entity_id", request.ExpectedSoulId);
+        command.Parameters.AddWithValue("hash_key_ids", new[] { _options.CurrentKeyId });
         command.Parameters.AddWithValue("trace_id", request.TraceId);
         command.Parameters.AddWithValue("occurred_at", request.OccurredAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static void EnsureSameRequest(ReceiptRow receipt, string requestHash, string operation)
+    private void EnsureSameRequest(
+        ReceiptRow receipt, string operation, string tenantId, IdentityAliasKind aliasKind,
+        string rawAlias, Func<IReadOnlyList<AliasReference>, string> legacyHash)
     {
-        if (!string.Equals(receipt.Operation, operation, StringComparison.Ordinal) ||
-            !SecretComparison.EqualsHex(receipt.RequestHash, requestHash))
+        if (!string.Equals(receipt.Operation, operation, StringComparison.Ordinal))
         {
             throw new IdempotencyConflictException();
         }
+        EnsureSameHash(receipt.RequestHash, receipt.HashVersion, receipt.HashKeyIds,
+            tenantId, aliasKind, rawAlias, legacyHash, "resolution");
     }
+
+    private void EnsureSameHash(
+        string storedHash, int version, string[]? keyIds, string tenantId, IdentityAliasKind aliasKind,
+        string rawAlias, Func<IReadOnlyList<AliasReference>, string> legacyHash, string domain)
+    {
+        if (version is not (1 or 2) || (version == 2 && keyIds?.Length != 1))
+            throw new ReceiptHashBasisUnavailableException();
+
+        if (keyIds is not null)
+        {
+            var hash = legacyHash(_digester.ReferencesForKeys(tenantId, aliasKind, rawAlias, keyIds));
+            if (SecretComparison.EqualsHex(storedHash, version == 2 ? Version2Hash(domain, hash) : hash))
+                return;
+        }
+        else
+        {
+            // A legacy receipt has no recorded basis. Try only complete configured key sets.
+            if (SecretComparison.EqualsHex(storedHash, legacyHash(_digester.AllReferences(tenantId, aliasKind, rawAlias))))
+                return;
+            foreach (var keySet in _options.LegacyReceiptHashKeySets)
+            {
+                var hash = legacyHash(_digester.ReferencesForKeys(tenantId, aliasKind, rawAlias, keySet));
+                if (SecretComparison.EqualsHex(storedHash, hash))
+                    return;
+            }
+        }
+        throw new IdempotencyConflictException();
+    }
+
+    private static string Version2Hash(string domain, string completeLegacyRequestHash)
+        => ComputeSha256($"dps.soul-registry.{domain}-request-hash/v2\n{completeLegacyRequestHash}");
 
     private static SoulResolved CreateContract(
         string soulId,
@@ -851,7 +910,9 @@ public sealed class PostgresSoulRegistry : IDisposable
         DateTimeOffset OccurredAt,
         string AliasKind,
         string AliasDigest,
-        string AliasKeyId)
+        string AliasKeyId,
+        int HashVersion,
+        string[]? HashKeyIds)
     {
         public SoulResolved ToContract()
             => CreateContract(
@@ -864,5 +925,6 @@ public sealed class PostgresSoulRegistry : IDisposable
                 new AliasReference(AliasKind, AliasDigest, AliasKeyId));
     }
 
-    private sealed record MutationReceiptRow(string Operation, string RequestHash, string EntityId);
+    private sealed record MutationReceiptRow(
+        string Operation, string RequestHash, string EntityId, int HashVersion, string[]? HashKeyIds);
 }
