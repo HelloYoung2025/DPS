@@ -1,10 +1,10 @@
 # DPS 项目技术书与 AI 接手手册
 
-> 文档状态：`Current`（交接事实快照与目标技术规范）  
-> 证据状态：`NONE`  
-> 快照日期：2026-07-15  
-> 基准分支：`main`  
-> 基准提交：`cac7ccbcce927a1a3a62cfd376497f0d30cc47e4`  
+> 文档状态：`Current`（交接事实快照与目标技术规范）<br>
+> 证据状态：`NONE`<br>
+> 快照日期：2026-07-15<br>
+> 基准分支：`main`<br>
+> 基准提交：`cac7ccbcce927a1a3a62cfd376497f0d30cc47e4`<br>
 > 远程仓库：`https://github.com/HelloYoung2025/DPS.git`
 
 ## 0. 这本技术书如何使用

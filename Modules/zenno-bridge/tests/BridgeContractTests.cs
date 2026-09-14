@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.Json;

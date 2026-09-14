@@ -1,6 +1,6 @@
 # DPS Engineering Standards 工程标准
 
-状态: Current policy, implementation in progress  
+状态: Current policy, implementation in progress<br>
 日期: 2026-07-14
 
 当前正式签发证据级别是 `NONE`; `REPOSITORY_STATIC_VERIFIED` 只能在唯一整仓 Phase 0 门禁重新通过并生成有效证据后签发. 本文中尚未有对应源码, 自动测试和原始环境证据的条目都是 required target, 不是已完成功能.

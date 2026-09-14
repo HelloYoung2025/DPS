@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Mechanical build preparation
+
+- Add the existing Factory Release Controller contract project to `Dps.slnx`; the solution now declares all 68 existing projects without adding a module.
+- Pass test cancellation tokens through Memory Ledger, Operation Compiler and SoulMemory calls. Replace the blocking compiler test with async/await and keep its original exception assertions. Enable nullable analysis only in the modern Bridge contract test file.
+- Preserve Markdown header line breaks using explicit `<br>` and remove four string-external trailing spaces in Artifact Builder; its complete Python AST remains identical.
+- The 84 historical build diagnostics comprise 73 mechanical errors addressed by this slice and 11 genuine Projection v2 consumer errors assigned to P14 after P13. Locked build and affected .NET suites remain pending; no test threshold, analyzer or warning policy is lowered. Artifact Builder build, 35 unit and 6 contract tests pass; its 8 PostgreSQL tests fail on the existing PG 18.4 catalog mismatch, retained for the Factory migration work.
+
 ### Single human GitHub review
 
 - Apply the Owner's 2026-09-14 decision: require one designated human GitHub approval for sensitive paths, with required approving review count `1`. Keep the existing CODEOWNERS identity `@HelloYoung2025` and update the repository-protection document and navigation.

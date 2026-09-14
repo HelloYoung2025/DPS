@@ -1,7 +1,7 @@
 # DPS Target Architecture 目标架构
 
-状态: Proposed  
-日期: 2026-07-13  
+状态: Proposed<br>
+日期: 2026-07-13<br>
 目标: 每部手机拥有稳定 Soul ID, 由 GBrain Company 保存长期人格, 兴趣和记忆, ZennoDroid 只承担可靠执行.
 
 ## 一句话设计
