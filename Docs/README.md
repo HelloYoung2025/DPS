@@ -15,7 +15,7 @@
 | [PlatformTemplate_平台模块模板.md](PlatformTemplate_平台模块模板.md) | 新平台接入模板（配置驱动优先） | 开发者 |
 | [EngineeringStandards_工程标准.md](EngineeringStandards_工程标准.md) | 构建、测试、CI、安全、发布和 Definition of Done | 所有贡献者 |
 | [Architecture/TargetArchitecture_目标架构.md](Architecture/TargetArchitecture_目标架构.md) | GBrain Soul 记忆与 ZennoDroid 薄执行器目标架构 | 架构与开发人员 |
-| [Operations/RepositoryProtection_仓库保护.md](Operations/RepositoryProtection_仓库保护.md) | Factory 治理路径, 两人审批, 受保护工作流和外部信任根要求 | 仓库与发布管理员 |
+| [Operations/RepositoryProtection_仓库保护.md](Operations/RepositoryProtection_仓库保护.md) | Factory 治理路径, 单一人工 GitHub 审核, 受保护工作流和外部信任根要求 | 仓库与发布管理员 |
 | [Operations/GBrainCompany_LocalNonProduction_本地非生产.md](Operations/GBrainCompany_LocalNonProduction_本地非生产.md) | GBrain Company 的本机 PostgreSQL, Voyage, Source/OAuth 和证据边界 | 运维与测试管理员 |
 | [Platforms/GBrainCompany_Compatibility.md](Platforms/GBrainCompany_Compatibility.md) | 本机 GBrain 0.42.42.0 Source 隔离、32 字符 Source ID、软删除与 OAuth 能力探测；仅限诊断事实 | 架构、运维与适配器开发人员 |
 | [Platforms/ExternalVerification_F6-F9_外部验收.md](Platforms/ExternalVerification_F6-F9_外部验收.md) | Windows, GBrain, 真机, 灰度和规模证据输入边界 | 测试与发布管理员 |

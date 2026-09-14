@@ -1,6 +1,6 @@
-# Baseline ownership for the current personal repository. This file does not
-# replace the required GitHub ruleset: sensitive changes still need a second,
-# distinct human approval and an external/default-branch trusted workflow.
+# One designated human GitHub reviewer for the current personal repository.
+# The external GitHub ruleset must require one code-owner approval and the
+# trusted workflow, including stale-approval and last-pusher protections.
 * @HelloYoung2025
 
 # Governance and release authority surfaces.

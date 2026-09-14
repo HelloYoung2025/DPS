@@ -15,7 +15,7 @@ The local Candidate Runner is a non-issuer. Whether it runs against a dirty work
 The default branch must use a GitHub ruleset or equivalent controls with all of the following settings:
 
 - Changes enter through pull requests; direct pushes and force pushes are disabled.
-- At least two approvals from distinct human identities are required for governance, Factory, CI, trust-policy, evidence, and release paths.
+- One approval from the designated human GitHub reviewer is required for governance, Factory, CI, trust-policy, evidence, and release paths. Configure the GitHub required approving review count as `1`.
 - Code-owner review is required, stale approvals are dismissed, and the last pusher cannot satisfy the final approval alone.
 - Administrators and automation identities cannot bypass the protected-path rules during ordinary releases.
 - The required verification workflow is owned by the organization or loaded from the protected default branch. A candidate branch must not be able to replace the workflow that judges itself.
@@ -35,7 +35,9 @@ scripts/release.sh
 Modules/factory-*/**
 ```
 
-`.github/CODEOWNERS` establishes the current repository owner as a baseline reviewer. A personal repository with only that identity does not yet satisfy the two-person rule; add a distinct trusted reviewer before treating role separation as verified.
+`.github/CODEOWNERS` identifies `@HelloYoung2025` as the current designated human reviewer. One designated human GitHub account satisfies the reviewer-count requirement; the actual review must also satisfy the code-owner, stale-approval, and last-pusher rules above.
+
+The Owner decision on 2026-09-14 replaces the two-human GitHub approval-count requirement, including that count in DPS PDD v2.1 H1 and P03, with the single-human requirement above. This changes the required reviewer count; deployed trust roots and independent evidence issuance follow their existing requirements. Repository documentation records the requirement; external GitHub settings and actual approvals must still be read back before claiming enforcement.
 
 ## Deployed trust root
 
@@ -47,6 +49,6 @@ Modules/factory-*/**
 
 ## Evidence required to leave Proposed
 
-Capture the repository/ruleset identifier, protected branch, rule revision, required checks, approval identities, bypass list, default-branch workflow digest, Candidate Policy digest, complete Instruction Receipt digest, exact candidate commit, previous stable Trusted Runner/Factory artifact digest, trust-policy digest, independent issuance event, and independent release-approval event. Evidence must be collected without tokens or secrets and signed by an issuer that did not implement the candidate.
+Capture the repository/ruleset identifier, protected branch, rule revision, required checks, designated human reviewer identity and actual approving review, bypass list, default-branch workflow digest, Candidate Policy digest, complete Instruction Receipt digest, exact candidate commit, previous stable Trusted Runner/Factory artifact digest, trust-policy digest, independent issuance event, and independent release-approval event. Evidence must be collected without tokens or secrets and signed by an issuer that did not implement the candidate.
 
 Until those controls are configured and independently verified, Factory role separation remains `proposed`/`WAITING_EXTERNAL`; local tests, CODEOWNERS, or a passing candidate workflow cannot upgrade it by themselves.

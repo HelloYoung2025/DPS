@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Single human GitHub review
+
+- Apply the Owner's 2026-09-14 decision: require one designated human GitHub approval for sensitive paths, with required approving review count `1`. Keep the existing CODEOWNERS identity `@HelloYoung2025` and update the repository-protection document and navigation.
+- This explicitly supersedes the former two-human count in PDD v2.1 H1/P03. Existing deployed-trust and independent-issuer requirements continue to apply. This documentation change does not claim that external GitHub protection has already been configured or verified.
+
 ### Recoverable source preservation
 
 - Preserve the current source snapshot in four scoped local commits. Existing legacy C# bytes, the 79-file baseline and the 4+8+9 closed repair sets are unchanged by this preservation work.
