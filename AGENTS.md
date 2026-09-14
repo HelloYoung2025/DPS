@@ -77,6 +77,21 @@ Do not let a governance change approve itself in the same run. Governance, produ
 
 Runtime invariants in module instructions describe product behavior to preserve; editing a module does not itself assign a Factory role to the development session. Session roles and write scope come from the effective authorization and work order. Explicit Factory, independent QA, and frozen-work-order restrictions remain binding. Never infer permission to combine roles or self-issue evidence. See [instruction applicability and maintenance](Docs/EngineeringStandards_工程标准.md#22-指令适用主体与维护).
 
+## Agent execution roles
+
+- Before construction, repair, testing, QA, or review, every participating agent must read the installed `ponytail` skill in full and use `full`, not a remembered summary.
+- Follow the current Owner-designated effective PDD and record its location/version in the task or PR. These root rules apply without a machine-specific PDD path.
+- For every unit, including environment, repairs, documentation, contracts/governance, and integration, bind distinct actual Builder and QA task IDs, exact inputs, authorized write paths, applicable required checks and exits, and both role acceptances before implementation writes.
+- The Coordinator only coordinates, reads/verifies, reports, and hands off; it must not write product, test, configuration, contract/governance, or CHANGELOG candidates, perform integration writes, or substitute for Builder or QA.
+- The Builder is the unit's sole implementation writer within its valid scope and role; it implements, repairs, and runs development checks. Self-tests do not replace independent QA.
+- QA must not have implemented the candidate or its revision chain; it verifies a frozen candidate and may write only its own report and authorized isolated test resources, never repair the candidate. Reports bind the exact candidate, checks, results, and limits.
+- Freeze the exact candidate and bound inputs, and stop candidate writes before QA. Return blockers to the lawful Builder or external authority; freeze and independently recheck each revised candidate. Coordinator advances only after all applicable exits pass and QA blockers are resolved; partial handoffs retain unfinished acceptance.
+- QA must accept before implementation but may wait for the frozen candidate. If no qualified independent QA is available, queue the unit or replace the role and obtain acceptance; ordinary development or an inactive Factory never exempts this split.
+- On resumption, verify actual role IDs/acceptances, active writers, candidate and instruction versions; rebind changed inputs by impact. Preserve history; never backfill role names or invent earlier acceptance.
+- This minimum split does not replace the nine formal Factory roles, frozen QA rules, permissions, trusted evidence issuers, or release/rollback approvals. Worktrees and role names are not security isolation.
+- For H1-sensitive governance, Factory, CI, trust, evidence, and release paths entering protected merge or release, the Owner requires one designated human GitHub approval, not two; this H1 rule adds no human approval to ordinary authorized local changes. All other effective CODEOWNERS, identity separation, evidence issuance, and approval conditions remain binding.
+- Already-authorized emergency stop actions remain effective; safe interruption does not grant candidate write access or new recovery/compensation authority.
+
 ## Engineering workflow
 
 For non-trivial changes:
