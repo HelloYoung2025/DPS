@@ -4,6 +4,23 @@
 // 功能：启动安卓模拟器 → 等待就绪 → 打开 Reddit APP
 // =====================================================
 
+// F5 entrypoint containment: compiled ON until the signed fixed-ABI bridge is verified.
+const bool LEGACY_DISABLE_NEW_COMMANDS = true;
+const string LEGACY_BAD_END_TOKEN = "ERROR_BRIDGE_REQUIRED";
+if (LEGACY_DISABLE_NEW_COMMANDS)
+{
+    System.Action<string, string> SetGateVariable = (name, value) => {
+        try { project.Variables[name].Value = value; } catch (System.Exception) { }
+    };
+    SetGateVariable("zd_step_type", LEGACY_BAD_END_TOKEN);
+    SetGateVariable("zd_action_result", "UNKNOWN");
+    SetGateVariable("action_result", "ERROR");
+    SetGateVariable("session_result", "ERROR");
+    SetGateVariable("last_error", "modern authorization bridge unavailable");
+    SetGateVariable("zd_step_type", LEGACY_BAD_END_TOKEN);
+    return LEGACY_BAD_END_TOKEN;
+}
+
 Action<string> Log = (m) => project.SendInfoToLog("[StartReddit] " + m, true);
 Action<string> LogErr = (m) => project.SendErrorToLog("[StartReddit] " + m, true);
 

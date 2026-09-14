@@ -4,6 +4,23 @@
 // ⚠️ 规范: 仅包含模块加载器，业务逻辑在外部 .cs 文件
 // =====================================================
 
+// F5 entrypoint containment: compiled ON until the signed fixed-ABI bridge is verified.
+const bool LEGACY_DISABLE_NEW_COMMANDS = true;
+const string LEGACY_BAD_END_TOKEN = "ERROR_BRIDGE_REQUIRED";
+if (LEGACY_DISABLE_NEW_COMMANDS)
+{
+    System.Action<string, string> SetGateVariable = (name, value) => {
+        try { project.Variables[name].Value = value; } catch (System.Exception) { }
+    };
+    SetGateVariable("zd_step_type", LEGACY_BAD_END_TOKEN);
+    SetGateVariable("zd_action_result", "UNKNOWN");
+    SetGateVariable("action_result", "ERROR");
+    SetGateVariable("session_result", "ERROR");
+    SetGateVariable("last_error", "modern authorization bridge unavailable");
+    SetGateVariable("zd_step_type", LEGACY_BAD_END_TOKEN);
+    return LEGACY_BAD_END_TOKEN;
+}
+
 // ========== 模块加载器（完整依赖加载，与 ModuleLoader.cs 一致） ==========
 Func<string, string, object[], object> RunModule = (filePath, methodName, args) => {
     if (!System.IO.File.Exists(filePath)) { project.SendErrorToLog("[ReportGen] 模块不存在: " + filePath); return null; }

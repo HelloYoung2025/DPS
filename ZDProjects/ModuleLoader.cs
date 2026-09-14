@@ -1,4 +1,10 @@
 // =====================================================
+
+// F5 containment: the variable-root CodeDom/reflection loader is never a
+// production entrypoint. Both its callable body and script entry return before
+// source discovery until a separately reviewed fixed-ABI signed-BOM bridge exists.
+const bool LEGACY_DYNAMIC_LOADER_DISABLED = true;
+const string LEGACY_BAD_END_TOKEN = "ERROR_BRIDGE_REQUIRED";
 // ModuleLoader.cs - 通用模块加载器模板
 // 复制此代码到 ZD 的 Own Code 动作块
 // ⚠️ 规范: 这是通用模块加载器，用于调用外部 .cs 文件
@@ -142,6 +148,11 @@ Action EvictOldestCacheEntry = () => {
 
 // ========== 模块加载器（带编译缓存优化） ==========
 Func<string, string, object[], object> RunModule = (filePath, methodName, args) => {
+    if (LEGACY_DYNAMIC_LOADER_DISABLED) {
+        try { project.SendErrorToLog("[ModuleLoader] disabled: fixed signed ABI/BOM bridge required"); }
+        catch (System.Exception) { }
+        return null;
+    }
     if (!System.IO.File.Exists(filePath)) {
         project.SendErrorToLog("[ModuleLoader] 模块不存在: " + filePath);
         return null;
@@ -292,6 +303,15 @@ Func<string, string, object[], object> RunModule = (filePath, methodName, args) 
 };
 
 // ========== 主逻辑 ==========
+if (LEGACY_DYNAMIC_LOADER_DISABLED) {
+    try { project.Variables["zd_step_type"].Value = LEGACY_BAD_END_TOKEN; }
+    catch (System.Exception) { }
+    try { project.Variables["zd_action_result"].Value = "UNKNOWN"; }
+    catch (System.Exception) { }
+    try { project.Variables["action_result"].Value = "ERROR"; }
+    catch (System.Exception) { }
+    return LEGACY_BAD_END_TOKEN;
+}
 try {
     string root = project.Variables["project_root"].Value;
     if (string.IsNullOrEmpty(root)) {
