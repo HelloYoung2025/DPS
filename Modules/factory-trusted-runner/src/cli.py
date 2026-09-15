@@ -19,9 +19,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from trusted_runner import (
-    TrustedRunner,
     TrustedRunnerError,
-    TrustedRunnerPolicy,
+    _read_protected_file,
     canonical_bytes,
     sha256_bytes,
 )
@@ -53,7 +52,8 @@ def _read_fixed_json(root: Path, filename: str) -> Mapping[str, Any]:
     if path.is_symlink() or not path.is_file() or path.parent.resolve(strict=True) != root:
         raise TrustedRunnerError(f"invalid fixed input {filename}")
     try:
-        value = json.loads(path.read_bytes())
+        content, _identity = _read_protected_file(path)
+        value = json.loads(content)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TrustedRunnerError(f"invalid JSON input {filename}") from exc
     if not isinstance(value, dict):
@@ -113,31 +113,10 @@ def _rsa_pss_issuer(payload: bytes, runner_identity: str, _policy_digest: str) -
 
 
 def run_from_environment() -> dict[str, Any]:
-    repository = _bound_directory("DPS_RUNNER_REPOSITORY_ROOT")
-    workspace = _bound_directory("DPS_RUNNER_EXECUTION_ROOT")
-    input_root = _bound_directory("DPS_RUNNER_INPUT_DIR")
-    if input_root == repository or input_root == workspace or repository in input_root.parents or workspace in input_root.parents:
-        raise TrustedRunnerError("runtime inputs must be outside repository and execution workspace")
-    inputs = {name: _read_fixed_json(input_root, filename) for name, filename in _INPUT_FILES.items()}
-    facts = _runtime_facts(inputs["facts"])
-    expected_policy = os.environ.get("DPS_RUNNER_POLICY_SHA256", "")
-    policy_bytes = canonical_bytes(inputs["policy"])
-    policy = TrustedRunnerPolicy.from_verified_document(
-        policy_bytes, expected_policy,
-        lambda _document, _digest: facts["policy"],
-    )
-    runner_identity = os.environ.get("DPS_RUNNER_IDENTITY", "")
-    runner = TrustedRunner(
-        repository, workspace, runner_identity,
-        auth_context_verifier=lambda _auth_id, _runner: facts["auth_context"],
-        receipt_verifier=lambda _receipt: facts["instruction_receipt"],
-        commit_workspace_verifier=lambda _root, _commit, _workspace: facts["commit_workspace"],
-        fence_verifier=lambda _lease_id, _tokens: facts["lease"],
-        attestation_issuer=_rsa_pss_issuer,
-    )
-    return runner.run(
-        inputs["request"], inputs["plan"], inputs["receipt"],
-        inputs["lease"], policy,
+    # Static HMAC bytes cannot attest to revocation/fencing after execution.
+    # Reject before opening input/signing files or starting an untrusted test.
+    raise TrustedRunnerError(
+        "WAITING_EXTERNAL: static runtime facts have no post-execution currentness provider"
     )
 
 

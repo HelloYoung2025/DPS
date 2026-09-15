@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P17A Runner post-execution binding
+
+- Freeze Runner request/plan/receipt/lease/policy inputs and recheck current facts, exact HEAD, complete workspace and Manifest before issuance. Read Manifest bytes once per validation with file/parent identity checks; reject expiry equality, revoked facts and protected-input drift with zero issuer calls.
+- Bound POSIX leader/group cleanup and preserve permission/native/timeout facts. Keep signal 0 EPERM as UNKNOWN within the original deadline, require timely actual ESRCH, and retain nonzero-signal errors as terminal failures. Observe group completion after leader exit, include descendant time in the timeout, stop signals after ESRCH and expose synthetic PID/PGID/cleanup records in tests. This does not establish production containment or Windows process-tree control.
+- Disable the static HMAC CLI with exit 2 before execution or key/input reads; recovery requires separately bound independent currentness. Preserve v1 identity/digest/Schema fields and ordinary signed non-releasing FAIL/SKIP/INFRA diagnostics after successful integrity checks. Dynamic fixtures retain real RSA-PSS verification and reject tampering using temporary synthetic keys only.
+- P17A changes only Runner implementation, its existing tests and operations/changelog documents. Public contracts, policies and Merge/Host/Artifact/Ledger implementations remain unchanged. P17B and full consumer/Phase0/Candidate/Windows/device/real-issuer gates remain pending; local Builder checks and candidate publication do not grant QA, acceptance, integration or formal verification status.
+
 ### Soul receipt replay across alias-key rotation
 
 - Record versioned request-hash key metadata on new Soul resolution and revocation receipts. Replay uses the recorded key while alias lookup may add newer keys; unchanged requests return the original receipt and changed requests remain conflicts.
