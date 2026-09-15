@@ -97,7 +97,8 @@ def _rsa_pss_issuer(payload: bytes, runner_identity: str, _policy_digest: str) -
         raise TrustedRunnerError("RSA private key permissions are too broad")
     completed = subprocess.run(
         [str(openssl.resolve(strict=True)), "dgst", "-sha256", "-sign",
-         str(key.resolve(strict=True)), "-sigopt", "rsa_padding_mode:pss"],
+         str(key.resolve(strict=True)), "-sigopt", "rsa_padding_mode:pss",
+         "-sigopt", "rsa_pss_saltlen:32", "-sigopt", "rsa_mgf1_md:sha256"],
         input=payload, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, shell=False, timeout=15, check=False,
         env={key: value for key, value in os.environ.items() if key in {"HOME", "PATH", "TMPDIR"}},

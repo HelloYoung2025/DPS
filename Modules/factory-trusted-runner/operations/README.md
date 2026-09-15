@@ -15,3 +15,64 @@ Commands retain exact argv, `shell=False`, the existing environment allowlist an
 After every integrity/currentness/cleanup check succeeds, results retain `trusted.test.result/v1`, its identity and digest fields and the existing RSA-PSS payload/domain/salt behavior. Ordinary FAIL/SKIP and timeout/output-limit INFRA_ERROR may retain signed failure diagnostics with `release_allowed=false`. Local crypto tests generate temporary synthetic RSA keys, validate the real result Schema, verify the signature with OpenSSL and reject payload/signature tampering. These tests do not deploy a signer or confer evidence eligibility. Merge request signature coverage remains separate P17B work; consumer implementations and public contracts are unchanged.
 
 `factory_disable_trusted_execution` stops new processes. Rollback routes to the previous signed runner and preserves emitted hashes.
+# Complete merge request issuance
+
+`TrustedRunner.issue_merge_request(metadata, run_inputs, policy)` accepts a
+finite metadata proposal and one work item per required check in the trusted
+Runner policy. Each item contains only `request`, `worktree_plan`,
+`instruction_receipt` and `lease`. Evidence comes exclusively from sequential
+internal `run` calls. Caller evidence, attestations, required sets and roles
+are forbidden. The producer fixes schema, contract, producer and trusted time.
+Metadata supplies the remaining owner-contract fields, including exact receipt
+summaries bound to the complete BOUND run receipts by ID, hash, status and diff.
+
+The sole new constructor port is optional `merge_request_verifier(request,
+runner_identity)`. Without it, issuance returns WAITING_EXTERNAL by raising
+`TrustedRunnerError` before any run or signer call. The trusted composition
+must supply a provider that independently authenticates and refreshes complete
+scope, authorized integration commit and branch relationships, diff and paths,
+conflicts, complete current receipts, Merge policy, allowed issuer and separate
+roles, recognized Runner policy, entire required set, expiry and revocation.
+Unprovable facts must fail. Hashing and returning True is not authentication.
+There is no production provider in this slice; all providers in tests are
+TEST_ONLY. JSON cannot select or install this capability. The CLI remains
+WAITING_EXTERNAL before reading input or signing keys.
+
+The provider receives copies of identical complete frozen unsigned request
+bytes at PRE and POST. Its existing verified-fact response must bind
+`verified is True`, exact `fact_id == merge_request_id` and `fact_sha256` equal
+to SHA-256 of canonical unsigned bytes without the signature domain prefix.
+Runner independently computes that hash and checks the callback copy unchanged.
+Extra returned fields grant no authority. Provider exceptions fail closed.
+
+A nonblocking instance lock rejects reentry and concurrent issuance and is
+released in finally. Each call freezes metadata, all run inputs and policy,
+records initial auth, receipts, plans, Manifest, HEAD, workspace identities,
+leases, fences and time, runs the complete batch, then rechecks every item.
+Required results must be PASS, required and release-allowed and match request
+scope, integration commit, Runner policy and required set. Full batch checks
+run after PRE, and again after the signer and POST before returning a copy.
+Lease time is `acquired_at <= now < expires_at`; equality at expiry and clock
+regression fail. Result signing counts remain distinct from request signing:
+PRE failure signs zero requests; POST failure can leave one signed request
+internally but returns none. Historical result issuance retains its diagnostic
+semantics.
+
+The owner profile is in Merge's provided `merge.request.v1.schema.json`:
+prefix `b"dps-merge-request-attestation/v1\n"` plus the complete request minus
+only its own top-level attestation, including all embedded attestations.
+Canonical JSON uses UTF-8, sorted keys, compact separators, Unicode text and
+finite numbers; array order is preserved. Both digest and RSA-PSS signature
+bind prefix-included bytes. OpenSSL explicitly uses SHA-256, MGF1-SHA-256 and
+32-byte salt. No runtime import of Merge private implementation is introduced.
+All four existing test files read the shared owner corpus. A decoded Mapping
+cannot recover duplicate keys; the product rejects unsupported raw strings
+and non-finite Mapping values without claiming a strict upstream raw parser.
+
+Synchronous callbacks are not preemptibly cancelled. Production bounded I/O
+and trust remain external requirements. Rechecks do not provide same-UID
+atomic isolation, transient change-and-restore detection or global anti-replay.
+Failure handling stops new execution, candidate evidence consumption and merge,
+preserves history, and never rolls back to the known partial signer. Local
+synthetic tests do not authorize bootstrap, production trust, deployment,
+protected approval, Windows or device operation.

@@ -9,6 +9,7 @@ import hmac
 import json
 import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 
@@ -60,7 +61,7 @@ class InvalidMergeRequest(ValueError):
 
 
 def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def sha256(value: Any) -> str:
@@ -222,6 +223,20 @@ class MergeController:
         return self._policy_sha256
 
     def evaluate(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        original = _require_mapping(request, "request")
+        try:
+            frozen_bytes = canonical_bytes(original)
+            frozen = json.loads(frozen_bytes)
+            decision = self._evaluate_frozen(frozen)
+            if canonical_bytes(original) != frozen_bytes:
+                raise InvalidMergeRequest("merge request changed during evaluation")
+            return decision
+        except (TypeError, ValueError, RecursionError) as exc:
+            if isinstance(exc, InvalidMergeRequest):
+                raise
+            raise InvalidMergeRequest("merge request must be finite JSON") from exc
+
+    def _evaluate_frozen(self, request: Mapping[str, Any]) -> dict[str, Any]:
         request = _require_mapping(request, "request")
         if set(request) != _REQUEST_FIELDS:
             raise InvalidMergeRequest("merge request has unknown or missing fields")
@@ -236,31 +251,37 @@ class MergeController:
 
         request_id = request.get("merge_request_id")
         merge_commit = request.get("integration_commit")
-        if not isinstance(request_id, str) or len(request_id) < 8:
+        if not isinstance(request_id, str) or re.fullmatch(r"[a-z0-9][a-z0-9._:-]{7,127}", request_id) is None:
             raise InvalidMergeRequest("merge_request_id is required")
+        occurred_at = request.get("occurred_at")
+        if (request.get("privacy_class") != "internal" or not isinstance(occurred_at, str)
+                or re.fullmatch(r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})", occurred_at) is None):
+            raise InvalidMergeRequest("merge request privacy or time is invalid")
+        datetime.fromisoformat(occurred_at.upper().replace("Z", "+00:00"))
         if not isinstance(merge_commit, str) or not _COMMIT.fullmatch(merge_commit):
             raise InvalidMergeRequest("integration_commit must be a lowercase 40-character Git object")
 
         evidence = list(_require_sequence(request.get("evidence"), "evidence"))
         receipts = list(_require_sequence(request.get("instruction_receipts"), "instruction_receipts"))
         changed_paths = list(_require_sequence(request.get("changed_paths"), "changed_paths"))
+        if any(not isinstance(path, str) or not path for path in changed_paths) or len(set(changed_paths)) != len(changed_paths):
+            raise InvalidMergeRequest("changed_paths must contain unique nonempty strings")
+        branches = _require_sequence(request.get("branch_heads"), "branch_heads")
+        if not branches:
+            raise InvalidMergeRequest("branch_heads is empty")
+        for branch in branches:
+            if (not isinstance(branch, Mapping) or set(branch) != {"module_id", "commit"}
+                    or not isinstance(branch["module_id"], str)
+                    or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", branch["module_id"]) is None
+                    or not isinstance(branch["commit"], str) or not _COMMIT.fullmatch(branch["commit"])):
+                raise InvalidMergeRequest("invalid branch head")
         conflicts = _require_mapping(request.get("conflicts"), "conflicts")
         if set(conflicts) != {"merge", "path_ownership", "contract_ownership"}:
             raise InvalidMergeRequest("conflicts has unknown or missing fields")
         current_diff = request.get("current_diff_fingerprint")
         if not isinstance(current_diff, str) or not _SHA256.fullmatch(current_diff):
             raise InvalidMergeRequest("current_diff_fingerprint must be SHA-256")
-        attested_payload = {
-            "contract_id": "merge.request-attestation/v1",
-            "merge_request_id": request_id,
-            "integration_commit": merge_commit,
-            "changed_paths_sha256": sha256(changed_paths),
-            "evidence_sha256": sha256(evidence),
-            "instruction_receipts_sha256": sha256(receipts),
-            "conflicts_sha256": sha256(dict(conflicts)),
-            "current_diff_fingerprint": current_diff,
-            "trusted_policy_sha256": self._policy_sha256,
-        }
+        attested_payload = {key: value for key, value in request.items() if key != "runner_attestation"}
         attested_bytes = b"dps-merge-request-attestation/v1\n" + canonical_bytes(attested_payload)
         signer_identity = self._trust_store.verify(
             _require_mapping(request.get("runner_attestation"), "runner_attestation"),
@@ -272,6 +293,8 @@ class MergeController:
         reasons: set[str] = set()
         for conflict_kind in ("merge", "path_ownership", "contract_ownership"):
             values = _require_sequence(conflicts.get(conflict_kind), f"conflicts.{conflict_kind}")
+            if any(not isinstance(value, str) or not value for value in values):
+                raise InvalidMergeRequest("conflicts must contain nonempty strings")
             if values:
                 reasons.add(f"{conflict_kind} conflict present")
 
@@ -281,6 +304,9 @@ class MergeController:
             receipt = _require_mapping(raw_receipt, "instruction_receipt")
             if set(receipt) != {"receipt_id", "status", "diff_fingerprint", "receipt_sha256"}:
                 raise InvalidMergeRequest("instruction receipt has unknown or missing fields")
+            if (not isinstance(receipt["receipt_id"], str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9._:-]{7,127}", receipt["receipt_id"]) is None):
+                raise InvalidMergeRequest("instruction receipt ID is invalid")
             if receipt.get("status") != "BOUND" or receipt.get("diff_fingerprint") != current_diff:
                 reasons.add("stale instruction receipt")
             if not isinstance(receipt.get("receipt_sha256"), str) or not _SHA256.fullmatch(receipt["receipt_sha256"]):
@@ -306,6 +332,10 @@ class MergeController:
                 raise InvalidMergeRequest("trusted test result is not bound to runner policy and manifest suite")
             if not _opaque_envelope_is_valid(item):
                 raise InvalidMergeRequest("trusted test result opaque identifier envelope is invalid")
+            if any(item.get(name) != request[name] for name in (
+                "soul_id", "device_binding_id", "platform_account_id", "trace_id"
+            )):
+                raise InvalidMergeRequest("trusted test result identity scope differs from merge request")
             unsigned = {key: value for key, value in item.items() if key != "runner_attestation"}
             pre_artifact = {key: value for key, value in unsigned.items() if key != "raw_artifact_sha256"}
             if item.get("raw_artifact_sha256") != sha256(pre_artifact):

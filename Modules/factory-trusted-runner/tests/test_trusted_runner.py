@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -956,6 +957,332 @@ class TrustedRunnerTests(unittest.TestCase):
                 path.symlink_to(external_root / "trusted-policy.json")
                 with self.assertRaises(TrustedRunnerError):
                     CLI._read_fixed_json(external_root, "request.json")
+
+
+class MergeBatchFixture(RunnerFixture):
+    """TEST_ONLY authorization, real run subprocesses; no deployed trust."""
+
+    def __init__(self, nonnull=False):
+        super().__init__()
+        second_suite = {**self.manifest["tests"]["suites"][0], "id": "demo.contract", "type": "contract"}
+        self.manifest["tests"]["suites"].append(second_suite)
+        self._write_manifest()
+        self._git("add", ".")
+        self._git("-c", "user.name=DPS Test", "-c", "user.email=dps@example.invalid", "commit", "-qm", "two required suites")
+        self.commit = self._git("rev-parse", "HEAD").strip()
+        document = json.loads(self._policy_document())
+        document["checks"].append({**document["checks"][0], "check_id": "demo.contract"})
+        self.policy_document = canonical_bytes(document)
+        self.policy_digest = sha256_bytes(self.policy_document)
+        self.policy = TrustedRunnerPolicy.from_verified_document(
+            self.policy_document, self.policy_digest, lambda _document, digest: self.fact(digest, digest)
+        )
+        self.plan["trusted_policy_sha256"] = self.policy_digest
+        self.receipt = self._receipt()
+        self.receipt["diff_fingerprint"] = "d" * 64
+        if nonnull:
+            values = {"soul_id": "soul_" + "1" * 64, "device_binding_id": "db_" + "2" * 32,
+                      "platform_account_id": "pa_" + "3" * 32}
+            for value in (self.request, self.plan, self.receipt):
+                value.update(values)
+        self.work = []
+        for index, check_id in enumerate(("demo.unit", "demo.contract")):
+            item = copy.deepcopy({"request": self.request, "worktree_plan": self.plan,
+                                  "instruction_receipt": self.receipt, "lease": self.lease})
+            item["request"].update(check_id=check_id, request_id="request:batch-" + str(index),
+                                   auth_context_id="auth-context-batch-" + str(index),
+                                   instruction_receipt_id="instruction:batch-" + str(index))
+            item["worktree_plan"]["instruction_receipt_id"] = item["request"]["instruction_receipt_id"]
+            item["instruction_receipt"].update(receipt_id=item["request"]["instruction_receipt_id"],
+                                                auth_context_id=item["request"]["auth_context_id"])
+            self.work.append(item)
+        self.auth_hashes = {item["request"]["auth_context_id"]: "a" * 64 for item in self.work}
+        self.merge_policy = {
+            "schema_version": "dps.merge-policy/v1", "policy_id": "merge-policy-batch",
+            "required_checks": ["demo.unit", "demo.contract"], "implementers": ["implementer-1"],
+            "evidence_issuers": ["runner-service"], "merge_decider": "merge-decider",
+            "release_approvers": ["human-approver"], "trusted_runner_policy_sha256": self.policy_digest,
+        }
+        self.metadata = {name: self.request[name] for name in (*MODULE._IDENTITIES, "trace_id", "idempotency_key")}
+        self.metadata.update(privacy_class="internal", merge_request_id="merge-request-batch", integration_commit=self.commit,
+                             branch_heads=[{"module_id": "demo", "commit": self.commit}],
+                             changed_paths=["Modules/demo/tests/test_fixture.py"],
+                             current_diff_fingerprint="d" * 64,
+                             conflicts={"merge": [], "path_ownership": [], "contract_ownership": []},
+                             trusted_policy_sha256=sha256_bytes(canonical_bytes(self.merge_policy)),
+                             instruction_receipts=[{
+                                 "receipt_id": item["instruction_receipt"]["receipt_id"], "status": "BOUND",
+                                 "diff_fingerprint": "d" * 64,
+                                 "receipt_sha256": sha256_bytes(canonical_bytes(item["instruction_receipt"])),
+                             } for item in self.work])
+        self.authorized_metadata = copy.deepcopy(self.metadata)
+        self.authorized = True
+        self.merge_calls, self.result_signatures, self.request_signatures = [], [], []
+        self.base_issuer = self.runner.attestation_issuer
+        self.runner = self._runner(
+            auth_context_verifier=lambda auth_id, _runner: self.fact(auth_id, self.auth_hashes[auth_id]),
+            merge_request_verifier=self.verify_merge,
+            attestation_issuer=self.issue_attestation,
+        )
+
+    def verify_merge(self, request, runner):
+        """TEST_ONLY exact proposal authority with explicit revocation and policy checks."""
+        self.merge_calls.append(canonical_bytes(request))
+        if not self.authorized or runner != "runner-service":
+            raise TrustedRunnerError("TEST_ONLY merge authorization revoked")
+        if any(request.get(name) != value for name, value in self.authorized_metadata.items()):
+            raise TrustedRunnerError("TEST_ONLY proposal differs from authorized merge facts")
+        if (request.get("schema_version") != "1.0.0" or request.get("contract_id") != "merge.request/v1"
+                or request.get("producer_module") != "factory-trusted-runner"):
+            raise TrustedRunnerError("TEST_ONLY wrong producer contract")
+        evidence = request.get("evidence", [])
+        if sorted(item["result"]["check_id"] for item in evidence) != sorted(self.merge_policy["required_checks"]):
+            raise TrustedRunnerError("TEST_ONLY incomplete current Merge required set")
+        if self.merge_policy["trusted_runner_policy_sha256"] != self.policy_digest:
+            raise TrustedRunnerError("TEST_ONLY Runner policy is not authorized by Merge")
+        if any(item["basis"] != "merge-head" or item["result"]["tested_commit"] != self.commit for item in evidence):
+            raise TrustedRunnerError("TEST_ONLY commit or branch relationship is not authorized")
+        return self.fact(request["merge_request_id"], sha256_bytes(canonical_bytes(request)))
+
+    def issue_attestation(self, payload, runner, policy):
+        calls = self.request_signatures if payload.startswith(b"dps-merge-request-attestation/v1\n") else self.result_signatures
+        calls.append(sha256_bytes(payload))
+        return self.base_issuer(payload, runner, policy)
+
+    def issue(self):
+        return self.runner.issue_merge_request(self.metadata, self.work, self.policy)
+
+
+class MergeBatchTests(unittest.TestCase):
+    def test_shared_owner_corpus_schema_and_runtime_boundaries(self):
+        path = Path(__file__).resolve().parents[2] / "factory-merge-controller/tests/fixtures/merge.request.v1.corpus.json"
+        corpus = json.loads(path.read_text(encoding="utf-8"))
+        with self.fixture() as fx:
+            for case in corpus["cases"]:
+                with self.subTest(case_id=case["case_id"]): assert_producer_corpus_case(self, case, fx)
+            for value in (float("nan"), float("inf"), float("-inf")):
+                metadata = copy.deepcopy(fx.metadata)
+                metadata["branch_heads"][0]["commit"] = value
+                with self.assertRaises(TrustedRunnerError): fx.runner.issue_merge_request(metadata, fx.work, fx.policy)
+            self.assertEqual([], fx.result_signatures + fx.request_signatures)
+
+    @contextlib.contextmanager
+    def fixture(self, nonnull=False):
+        fx = MergeBatchFixture(nonnull)
+        try:
+            yield fx
+        finally:
+            fx.close()
+
+    def test_real_two_check_batch_openssl_to_merge_null_and_nonempty(self):
+        path = Path(__file__).resolve().parents[2] / "factory-merge-controller" / "src" / "merge_controller.py"
+        spec = importlib.util.spec_from_file_location("p17b_real_merge_subject", path)
+        merge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(merge)
+        for nonnull in (False, True):
+            with self.subTest(nonnull=nonnull), self.fixture(nonnull) as fx, fx.real_signer() as (issuer, verify):
+                fx.base_issuer = issuer
+                key = os.environ["DPS_RUNNER_RSA_PRIVATE_KEY"]
+                openssl = os.environ["DPS_RUNNER_OPENSSL"]
+                modulus = subprocess.run([openssl, "rsa", "-in", key, "-noout", "-modulus"], check=True,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15).stdout.decode("ascii").strip().split("=", 1)[1]
+                public = subprocess.run([openssl, "pkey", "-in", key, "-text_pub", "-noout"], check=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15).stdout.decode("ascii")
+                exponent = int(re.search(r"Exponent: (\d+)", public).group(1))
+                consumer = merge.MergeController("merge-decider", fx.merge_policy, merge.RsaPssTrustStore({
+                    "runner-key-1": {"identity": "runner-service", "algorithm": "rsa-pss-sha256",
+                                     "modulus_hex": modulus, "exponent": exponent},
+                }))
+                signed = fx.issue()
+                from jsonschema import Draft202012Validator, FormatChecker
+                from referencing import Registry, Resource
+                owner_root = path.parents[1]
+                owner_schema = json.loads((owner_root / "contracts/provided/merge.request.v1.schema.json").read_text(encoding="utf-8"))
+                result_schema = json.loads((Path(__file__).resolve().parents[1] / "contracts/provided/trusted.test.result.v1.schema.json").read_text(encoding="utf-8"))
+                Draft202012Validator(owner_schema, format_checker=FormatChecker(), registry=Registry().with_resource(
+                    result_schema["$id"], Resource.from_contents(result_schema))).validate(signed)
+                decision = consumer.evaluate(signed)
+                self.assertEqual("APPROVED", decision["outcome"])
+                self.assertEqual(decision, consumer.evaluate(copy.deepcopy(signed)))
+                self.assertEqual([2, 1, 2], [len(fx.result_signatures), len(fx.request_signatures), len(fx.merge_calls)])
+                self.assertEqual(fx.merge_calls[0], fx.merge_calls[1])
+                payload = b"dps-merge-request-attestation/v1\n" + fx.merge_calls[0]
+                self.assertEqual(sha256_bytes(payload), signed["runner_attestation"]["payload_sha256"])
+                self.assertEqual(0, verify(payload, base64.b64decode(signed["runner_attestation"]["signature_value"])))
+                print("P17B_REAL_BATCH " + json.dumps({"nonnull": nonnull, "result_signatures": 2,
+                      "request_signatures": 1, "request_outputs": 1, "outcome": decision["outcome"],
+                      "authorization": "TEST_ONLY", "rsa": "real OpenSSL SHA256 MGF1-SHA256 salt32"}), flush=True)
+
+    def test_missing_verifier_and_caller_overrides_run_nothing(self):
+        with self.fixture() as fx:
+            fx.runner.merge_request_verifier = None
+            with mock.patch.object(fx.runner, "run", wraps=fx.runner.run) as run:
+                with self.assertRaisesRegex(TrustedRunnerError, "WAITING_EXTERNAL"):
+                    fx.issue()
+                run.assert_not_called()
+            self.assertEqual([], fx.result_signatures + fx.request_signatures)
+        for key in ("evidence", "runner_attestation", "required_checks", "roles", "merge_request_verifier", "occurred_at"):
+            with self.subTest(key=key), self.fixture() as fx:
+                fx.metadata[key] = []
+                with mock.patch.object(fx.runner, "run", wraps=fx.runner.run) as run:
+                    with self.assertRaises(TrustedRunnerError):
+                        fx.issue()
+                    run.assert_not_called()
+                self.assertEqual([], fx.result_signatures + fx.request_signatures)
+
+    def test_required_batch_is_exact_and_receipts_are_complete(self):
+        for case in ("omitted", "duplicate", "extra", "receipt-hash", "receipt-id", "receipt-status", "receipt-diff", "receipt-missing", "receipt-extra", "receipt-duplicate"):
+            with self.subTest(case=case), self.fixture() as fx:
+                if case == "omitted": fx.work.pop()
+                elif case in ("duplicate", "extra"): fx.work.append(copy.deepcopy(fx.work[0]))
+                elif case == "receipt-missing": fx.metadata["instruction_receipts"].pop()
+                elif case in ("receipt-extra", "receipt-duplicate"):
+                    fx.metadata["instruction_receipts"].append(copy.deepcopy(fx.metadata["instruction_receipts"][0]))
+                else:
+                    field = {"receipt-hash": "receipt_sha256", "receipt-id": "receipt_id",
+                             "receipt-status": "status", "receipt-diff": "diff_fingerprint"}[case]
+                    fx.metadata["instruction_receipts"][0][field] = "0" * 64
+                with self.assertRaises(TrustedRunnerError): fx.issue()
+                self.assertEqual([], fx.result_signatures + fx.request_signatures)
+
+    def test_verifier_wrong_fact_mutation_exception_and_post_rejection(self):
+        for case in ("bool", "shape", "id", "hash", "unverified", "exception", "mutate-rehash", "post"):
+            with self.subTest(case=case), self.fixture() as fx:
+                def verifier(request, runner):
+                    fact = fx.verify_merge(request, runner)
+                    if case == "bool": return True
+                    if case == "shape": return {}
+                    if case == "id": fact["fact_id"] = "merge-other-id"
+                    if case == "hash": fact["fact_sha256"] = "0" * 64
+                    if case == "unverified": fact["verified"] = 1
+                    if case == "exception": raise OSError("TEST_ONLY unavailable provider")
+                    if case == "mutate-rehash":
+                        request["branch_heads"][0]["commit"] = "0" * 40
+                        fact["fact_sha256"] = sha256_bytes(canonical_bytes(request))
+                    if case == "post" and len(fx.merge_calls) == 2: fact["verified"] = False
+                    return fact
+                fx.runner.merge_request_verifier = verifier
+                with self.assertRaises(TrustedRunnerError): fx.issue()
+                self.assertEqual(2, len(fx.result_signatures))
+                self.assertEqual(1 if case == "post" else 0, len(fx.request_signatures))
+
+    def test_test_only_provider_denies_each_authority_dimension(self):
+        for case in ("scope", "branches", "diff", "paths", "conflicts", "receipts", "policy", "required", "revoked"):
+            with self.subTest(case=case), self.fixture() as fx:
+                if case == "required": fx.merge_policy["required_checks"].append("demo.other")
+                elif case == "revoked": fx.authorized = False
+                else:
+                    field = {"scope": "soul_id", "branches": "branch_heads", "diff": "current_diff_fingerprint",
+                             "paths": "changed_paths", "conflicts": "conflicts", "receipts": "instruction_receipts",
+                             "policy": "trusted_policy_sha256"}[case]
+                    fx.authorized_metadata[field] = "not-current-authorized-value"
+                with self.assertRaisesRegex(TrustedRunnerError, "TEST_ONLY"): fx.issue()
+                self.assertEqual(2, len(fx.result_signatures))
+                self.assertEqual(0, len(fx.request_signatures))
+
+    def test_first_work_item_drift_after_later_run_is_rejected(self):
+        for case in ("auth", "receipt", "plan", "manifest", "head", "workspace", "lease", "fence", "policy"):
+            with self.subTest(case=case), self.fixture() as fx:
+                run = fx.runner.run
+                completed = []
+                def changed_run(*args, **kwargs):
+                    result = run(*args, **kwargs)
+                    completed.append(result)
+                    if len(completed) == 2:
+                        first = fx.work[0]
+                        if case == "auth": fx.auth_hashes[first["request"]["auth_context_id"]] = "c" * 64
+                        elif case == "receipt": first["instruction_receipt"]["status"] = "STALE"
+                        elif case == "plan": first["worktree_plan"]["entries"][0]["writer_identity"] = "other-writer"
+                        elif case == "manifest": fx.manifest_path.write_text("{}", encoding="utf-8")
+                        elif case == "head": fx._git("-c", "user.name=DPS Test", "-c", "user.email=dps@example.invalid", "commit", "--allow-empty", "-qm", "changed head")
+                        elif case == "workspace": fx.test_file.write_text("# persistent change\n", encoding="utf-8")
+                        elif case == "lease": first["lease"]["status"] = "RELEASED"
+                        elif case == "fence": fx.lease["lock_tokens"]["module:demo"] += 1
+                        elif case == "policy": fx.policy.checks.pop("demo.unit")
+                    return result
+                with mock.patch.object(fx.runner, "run", new=changed_run):
+                    with self.assertRaises(TrustedRunnerError): fx.issue()
+                self.assertEqual(2, len(fx.result_signatures))
+                self.assertEqual(0, len(fx.request_signatures))
+
+    def test_pre_issuer_post_drift_expiry_and_backwards_clock(self):
+        for phase in ("PRE", "ISSUER", "POST"):
+            for case in ("input", "workspace", "auth", "fence", "expiry", "equal-expiry", "backwards", "revoked"):
+                with self.subTest(phase=phase, case=case), self.fixture() as fx:
+                    clock = MODULE._utc_now
+                    current = [None]
+                    def drift():
+                        if case == "input": fx.work[0]["request"]["trace_id"] = "trace_" + "9" * 32
+                        elif case == "workspace": fx.test_file.write_text("# issuer drift\n", encoding="utf-8")
+                        elif case == "auth": fx.auth_hashes[fx.work[0]["request"]["auth_context_id"]] = "c" * 64
+                        elif case == "fence": fx.lease["lock_tokens"]["module:demo"] += 1
+                        elif case in ("expiry", "equal-expiry"):
+                            expiry = dt.datetime.fromisoformat(fx.lease["expires_at"].replace("Z", "+00:00"))
+                            current[0] = (expiry + dt.timedelta(seconds=case == "expiry")).isoformat()
+                        elif case == "backwards": current[0] = fx.lease["acquired_at"]
+                        elif case == "revoked": fx.authorized = False
+                    def verifier(request, runner):
+                        fact = fx.verify_merge(request, runner)
+                        if (phase == "PRE" and len(fx.merge_calls) == 1) or (phase == "POST" and len(fx.merge_calls) == 2):
+                            drift()
+                            if case == "revoked": raise TrustedRunnerError("TEST_ONLY revoked during refresh")
+                        return fact
+                    def issuer(payload, runner, policy):
+                        result = fx.issue_attestation(payload, runner, policy)
+                        if phase == "ISSUER" and payload.startswith(b"dps-merge-request-attestation/v1\n"): drift()
+                        return result
+                    fx.runner.merge_request_verifier = verifier
+                    fx.runner.attestation_issuer = issuer
+                    with mock.patch.object(MODULE, "_utc_now", side_effect=lambda: current[0] or clock()):
+                        with self.assertRaises(TrustedRunnerError): fx.issue()
+                    self.assertEqual(2, len(fx.result_signatures))
+                    self.assertEqual(0 if phase == "PRE" else 1, len(fx.request_signatures))
+
+    def test_instance_reentry_concurrency_and_finally_release(self):
+        import threading
+        with self.fixture() as fx:
+            refused = []
+            def verifier(request, runner):
+                with self.assertRaisesRegex(TrustedRunnerError, "already active"): fx.issue()
+                def concurrent():
+                    try: fx.issue()
+                    except TrustedRunnerError as exc: refused.append(str(exc))
+                thread = threading.Thread(target=concurrent)
+                thread.start()
+                thread.join(2)
+                self.assertFalse(thread.is_alive())
+                return fx.verify_merge(request, runner)
+            fx.runner.merge_request_verifier = verifier
+            fx.issue()
+            self.assertEqual(2, len(refused))
+            self.assertTrue(all("already active" in value for value in refused))
+            fx.runner.merge_request_verifier = lambda *_args: (_ for _ in ()).throw(OSError("TEST_ONLY"))
+            with self.assertRaises(TrustedRunnerError): fx.issue()
+            fx.runner.merge_request_verifier = fx.verify_merge
+            self.assertEqual("merge.request/v1", fx.issue()["contract_id"])
+
+    def test_nonpass_batch_preserves_historical_result_counts(self):
+        with self.fixture() as fx:
+            execute = fx.runner._execute
+            def failed_execute(*args, **kwargs):
+                _code, out, err, timed_out, limited = execute(*args, **kwargs)
+                return 1, out, err, timed_out, limited
+            with mock.patch.object(fx.runner, "_execute", new=failed_execute):
+                with self.assertRaisesRegex(TrustedRunnerError, "not release-allowed PASS"): fx.issue()
+            self.assertEqual(1, len(fx.result_signatures))
+            self.assertEqual(0, len(fx.request_signatures))
+
+
+def assert_producer_corpus_case(test, case, fx):
+    """The producer accepts proposals, never caller-signed wire requests or results."""
+    owner_path = Path(__file__).resolve().parents[2] / "factory-merge-controller/tests/test_merge_controller.py"
+    spec = importlib.util.spec_from_file_location("p17b_runner_owner_corpus_fixture", owner_path)
+    owner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(owner)
+    owner.assert_owner_corpus_case(test, case)
+    test.assertEqual("REJECTED_CALLER_WIRE_OR_RAW", case["expected_runner_boundary"])
+    with test.assertRaises(TrustedRunnerError):
+        fx.runner.issue_merge_request(copy.deepcopy(case["input"]), fx.work, fx.policy)
 
 
 if __name__ == "__main__":

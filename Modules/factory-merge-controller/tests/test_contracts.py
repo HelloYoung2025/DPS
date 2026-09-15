@@ -169,17 +169,7 @@ def valid_request(subject):
         "trusted_policy_sha256": subject.trusted_policy_sha256,
         "runner_attestation": {},
     }
-    payload = {
-        "contract_id": "merge.request-attestation/v1",
-        "merge_request_id": request["merge_request_id"],
-        "integration_commit": request["integration_commit"],
-        "changed_paths_sha256": SUBJECT.sha256(request["changed_paths"]),
-        "evidence_sha256": SUBJECT.sha256(request["evidence"]),
-        "instruction_receipts_sha256": SUBJECT.sha256(request["instruction_receipts"]),
-        "conflicts_sha256": SUBJECT.sha256(request["conflicts"]),
-        "current_diff_fingerprint": request["current_diff_fingerprint"],
-        "trusted_policy_sha256": request["trusted_policy_sha256"],
-    }
+    payload = {key: value for key, value in request.items() if key != "runner_attestation"}
     request["runner_attestation"] = attestation(
         b"dps-merge-request-attestation/v1\n" + SUBJECT.canonical_bytes(payload)
     )
@@ -191,6 +181,15 @@ def load(path):
 
 
 class MergeContractTests(unittest.TestCase):
+    def test_shared_owner_corpus_schema_and_runtime(self):
+        path = ROOT / "tests" / "test_merge_controller.py"
+        spec = importlib.util.spec_from_file_location("p17b_merge_contract_corpus_fixture", path)
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        corpus = load(ROOT / "tests/fixtures/merge.request.v1.corpus.json")
+        for case in corpus["cases"]:
+            with self.subTest(case_id=case["case_id"]): fixture.assert_owner_corpus_case(self, case)
+
     @classmethod
     def setUpClass(cls):
         provided = ROOT / "contracts" / "provided"

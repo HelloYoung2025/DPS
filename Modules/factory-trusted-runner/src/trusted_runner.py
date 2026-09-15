@@ -19,6 +19,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -70,11 +71,18 @@ _CHECK_KEYS = {
 _ATTESTATION_KEYS = {
     "algorithm", "key_id", "signer_identity", "payload_sha256", "signature_value",
 }
+_MERGE_METADATA_KEYS = {
+    "soul_id", "device_binding_id", "platform_account_id", "trace_id",
+    "idempotency_key", "privacy_class", "merge_request_id", "integration_commit",
+    "branch_heads", "changed_paths", "instruction_receipts",
+    "current_diff_fingerprint", "conflicts", "trusted_policy_sha256",
+}
+_MERGE_DOMAIN = b"dps-merge-request-attestation/v1\n"
 
 
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode("utf-8")
 
 
@@ -107,7 +115,7 @@ def _timestamp(value: Any, label: str) -> datetime:
     return parsed
 
 
-def _identity_envelope(value: Mapping[str, Any]) -> None:
+def _scope_envelope(value: Mapping[str, Any]) -> None:
     for name, pattern in _IDENTITIES.items():
         item = value.get(name)
         if item is not None and (not isinstance(item, str) or pattern.fullmatch(item) is None):
@@ -116,6 +124,10 @@ def _identity_envelope(value: Mapping[str, Any]) -> None:
         item = value.get(name)
         if not isinstance(item, str) or pattern.fullmatch(item) is None:
             raise TrustedRunnerError(f"invalid {name}")
+
+
+def _identity_envelope(value: Mapping[str, Any]) -> None:
+    _scope_envelope(value)
     for name, minimum, maximum in (("auth_context_id", 8, 128), ("request_id", 8, 128)):
         item = value.get(name)
         if not isinstance(item, str) or not minimum <= len(item) <= maximum:
@@ -408,6 +420,7 @@ class TrustedRunner:
         commit_workspace_verifier: Callable[[Path, str, str], Mapping[str, Any]],
         fence_verifier: Callable[[str, Mapping[str, int]], Mapping[str, Any]],
         attestation_issuer: Callable[[bytes, str, str], Mapping[str, Any]],
+        merge_request_verifier: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
     ) -> None:
         self.repository_root = self._root(repository_root, "repository root")
         self.execution_root = self._root(execution_root, "execution root")
@@ -419,6 +432,8 @@ class TrustedRunner:
         self.commit_workspace_verifier = commit_workspace_verifier
         self.fence_verifier = fence_verifier
         self.attestation_issuer = attestation_issuer
+        self.merge_request_verifier = merge_request_verifier
+        self._merge_request_lock = threading.Lock()
 
     @staticmethod
     def _root(value: str | os.PathLike[str], label: str) -> Path:
@@ -426,6 +441,206 @@ class TrustedRunner:
         if path.is_symlink() or not path.exists() or not path.is_dir():
             raise TrustedRunnerError(f"invalid {label}")
         return path.resolve(strict=True)
+
+    def issue_merge_request(
+        self, metadata: Mapping[str, Any], run_inputs: Sequence[Mapping[str, Any]],
+        policy: TrustedRunnerPolicy,
+    ) -> dict[str, Any]:
+        """Issue only a complete, current batch; the provider is composition-owned."""
+        if not self._merge_request_lock.acquire(blocking=False):
+            raise TrustedRunnerError("merge request issuance is already active")
+        try:
+            verifier = self.merge_request_verifier
+            if verifier is None:
+                raise TrustedRunnerError("WAITING_EXTERNAL: merge request currentness verifier required")
+            if not callable(verifier):
+                raise TrustedRunnerError("invalid merge request verifier")
+            if not isinstance(metadata, Mapping) or not isinstance(run_inputs, list):
+                raise TrustedRunnerError("merge metadata must be an object and run_inputs a list")
+            if not isinstance(policy, TrustedRunnerPolicy):
+                raise TrustedRunnerError("verified Runner policy required")
+            originals, original_policy = (metadata, run_inputs), policy
+            original_bytes = canonical_bytes(originals)
+            metadata, work = json.loads(original_bytes)
+            policy = copy.deepcopy(policy)
+            _exact_keys(metadata, _MERGE_METADATA_KEYS, "merge metadata")
+            _scope_envelope(metadata)
+            self._validate_merge_metadata(metadata)
+            if policy.runner_identity != self.runner_identity:
+                raise TrustedRunnerError("process runner identity does not match trusted policy")
+            required = sorted(check.check_id for check in policy.checks.values() if check.required)
+            check_ids = []
+            for item in work:
+                if not isinstance(item, Mapping):
+                    raise TrustedRunnerError("run work item must be an object")
+                _exact_keys(item, {"request", "worktree_plan", "instruction_receipt", "lease"}, "run work item")
+                if any(not isinstance(value, Mapping) for value in item.values()):
+                    raise TrustedRunnerError("run work item values must be objects")
+                request = item["request"]
+                _exact_keys(request, _REQUEST_KEYS, "run request")
+                _identity_envelope(request)
+                check_id = request["check_id"]
+                if not isinstance(check_id, str) or check_id not in policy.checks:
+                    raise TrustedRunnerError("unknown trusted check")
+                if request["module_id"] != policy.checks[check_id].module_id:
+                    raise TrustedRunnerError("run module does not match trusted check")
+                if any(request[name] != metadata[name] for name in (*_IDENTITIES, "trace_id")):
+                    raise TrustedRunnerError("run identity scope differs from merge request")
+                check_ids.append(check_id)
+            if not required or sorted(check_ids) != required:
+                raise TrustedRunnerError("batch must contain every required check exactly once")
+
+            summaries = {}
+            for item in work:
+                receipt = item["instruction_receipt"]
+                receipt_id = item["request"]["instruction_receipt_id"]
+                summary = {"receipt_id": receipt_id, "status": receipt.get("status"),
+                           "diff_fingerprint": receipt.get("diff_fingerprint"),
+                           "receipt_sha256": sha256_bytes(canonical_bytes(receipt))}
+                if receipt_id in summaries and summaries[receipt_id] != summary:
+                    raise TrustedRunnerError("same receipt ID binds different complete receipts")
+                summaries[receipt_id] = summary
+            proposed = metadata["instruction_receipts"]
+            if (len(proposed) != len(summaries)
+                    or len({item["receipt_id"] for item in proposed}) != len(proposed)
+                    or any(summaries.get(item["receipt_id"]) != item for item in proposed)):
+                raise TrustedRunnerError("merge receipt summaries differ from complete run receipts")
+
+            last_time = _utc_now()
+            initial = [self._merge_run_facts(item, policy, last_time) for item in work]
+            results = []
+
+            def check_batch() -> str:
+                nonlocal last_time
+                if (canonical_bytes(originals) != original_bytes or original_policy != policy
+                        or canonical_bytes((metadata, work)) != original_bytes):
+                    raise TrustedRunnerError("merge batch inputs or policy changed")
+                now = _utc_now()
+                if _timestamp(now, "batch time") < _timestamp(last_time, "previous batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards in merge batch")
+                for item, admitted in zip(work, initial):
+                    if self._merge_run_facts(item, policy, now) != admitted:
+                        raise TrustedRunnerError("merge batch admitted facts changed")
+                end = _utc_now()
+                if _timestamp(end, "batch end") < _timestamp(now, "batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards during batch check")
+                for item in work:
+                    self._lease_time(item["lease"], end)
+                if (canonical_bytes(originals) != original_bytes or original_policy != policy
+                        or canonical_bytes((metadata, work)) != original_bytes):
+                    raise TrustedRunnerError("merge batch changed during currentness check")
+                last_time = end
+                return end
+
+            check_batch()
+            for item, admitted in zip(work, initial):
+                result = json.loads(canonical_bytes(self.run(**copy.deepcopy(item), policy=copy.deepcopy(policy))))
+                if (result.get("status") != "PASS" or result.get("required") is not True
+                        or result.get("release_allowed") is not True):
+                    raise TrustedRunnerError("required batch check is not release-allowed PASS")
+                if (any(result.get(name) != metadata[name] for name in (*_IDENTITIES, "trace_id"))
+                        or result.get("check_id") != item["request"]["check_id"]
+                        or result.get("tested_commit") != metadata["integration_commit"]
+                        or result.get("tested_commit") != admitted["commit_workspace"][0]
+                        or result.get("trusted_policy_sha256") != policy.digest
+                        or result.get("required_checks_sha256") != sha256_bytes(canonical_bytes(required))):
+                    raise TrustedRunnerError("batch result differs from admitted merge facts")
+                finished = result["finished_at"]
+                if _timestamp(finished, "result finished_at") < _timestamp(last_time, "previous batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards between checks")
+                last_time = finished
+                results.append({"basis": "merge-head", "result": result})
+            occurred_at = check_batch()
+            unsigned = {**metadata, "schema_version": "1.0.0", "contract_id": "merge.request/v1",
+                        "producer_module": "factory-trusted-runner", "occurred_at": occurred_at,
+                        "evidence": results}
+            unsigned_bytes = canonical_bytes(unsigned)
+
+            def verify_current_request() -> None:
+                request_copy = json.loads(unsigned_bytes)
+                fact = verifier(request_copy, self.runner_identity)
+                if canonical_bytes(request_copy) != unsigned_bytes:
+                    raise TrustedRunnerError("merge verifier modified its request copy")
+                _verified_fact(fact, "merge request", metadata["merge_request_id"],
+                               sha256_bytes(unsigned_bytes))
+
+            verify_current_request()
+            check_batch()
+            payload = _MERGE_DOMAIN + unsigned_bytes
+            attestation = self._attestation(
+                self.attestation_issuer(payload, self.runner_identity, policy.digest), sha256_bytes(payload)
+            )
+            verify_current_request()
+            check_batch()
+            signed = json.loads(unsigned_bytes)
+            signed["runner_attestation"] = json.loads(canonical_bytes(attestation))
+            return signed
+        except TrustedRunnerError:
+            raise
+        except Exception as exc:
+            raise TrustedRunnerError("merge request issuance failed closed") from exc
+        finally:
+            self._merge_request_lock.release()
+
+    @staticmethod
+    def _validate_merge_metadata(value: Mapping[str, Any]) -> None:
+        for name, pattern in (("merge_request_id", r"[a-z0-9][a-z0-9._:-]{7,127}"),
+                              ("integration_commit", r"[0-9a-f]{40}"),
+                              ("trusted_policy_sha256", r"[0-9a-f]{64}"),
+                              ("current_diff_fingerprint", r"[0-9a-f]{64}")):
+            if not isinstance(value[name], str) or re.fullmatch(pattern, value[name]) is None:
+                raise TrustedRunnerError(f"invalid merge metadata {name}")
+        if value["privacy_class"] != "internal":
+            raise TrustedRunnerError("merge privacy_class must be internal")
+        branches = value["branch_heads"]
+        if not isinstance(branches, list) or not branches:
+            raise TrustedRunnerError("merge branch_heads must be a nonempty list")
+        for branch in branches:
+            if (not isinstance(branch, Mapping) or set(branch) != {"module_id", "commit"}
+                    or not isinstance(branch["module_id"], str) or not _MODULE_ID.fullmatch(branch["module_id"])
+                    or not isinstance(branch["commit"], str) or not _COMMIT.fullmatch(branch["commit"])):
+                raise TrustedRunnerError("invalid merge branch head")
+        paths = value["changed_paths"]
+        if (not isinstance(paths, list) or any(not isinstance(p, str) or not p for p in paths)
+                or len(set(paths)) != len(paths)):
+            raise TrustedRunnerError("invalid merge changed_paths")
+        conflicts = value["conflicts"]
+        if not isinstance(conflicts, Mapping) or set(conflicts) != {"merge", "path_ownership", "contract_ownership"}:
+            raise TrustedRunnerError("invalid merge conflicts")
+        if any(not isinstance(v, list) or any(not isinstance(s, str) or not s for s in v) for v in conflicts.values()):
+            raise TrustedRunnerError("invalid merge conflict values")
+        receipts = value["instruction_receipts"]
+        if not isinstance(receipts, list) or not receipts:
+            raise TrustedRunnerError("merge receipts must be a nonempty list")
+        for receipt in receipts:
+            if (not isinstance(receipt, Mapping)
+                    or set(receipt) != {"receipt_id", "status", "diff_fingerprint", "receipt_sha256"}
+                    or not isinstance(receipt["receipt_id"], str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9._:-]{7,127}", receipt["receipt_id"]) is None
+                    or receipt["status"] != "BOUND"
+                    or receipt["diff_fingerprint"] != value["current_diff_fingerprint"]
+                    or not isinstance(receipt["receipt_sha256"], str) or not _HASH.fullmatch(receipt["receipt_sha256"])):
+                raise TrustedRunnerError("invalid or stale merge receipt summary")
+
+    def _merge_run_facts(self, item: Mapping[str, Any], policy: TrustedRunnerPolicy, now: str) -> dict[str, Any]:
+        request, plan, receipt, lease = (item[k] for k in ("request", "worktree_plan", "instruction_receipt", "lease"))
+        auth = self.auth_context_verifier(request["auth_context_id"], self.runner_identity)
+        _verified_fact(auth, "auth context", request["auth_context_id"])
+        receipt_hash = sha256_bytes(canonical_bytes(receipt))
+        _verified_fact(self.receipt_verifier(copy.deepcopy(receipt)), "instruction receipt",
+                       request["instruction_receipt_id"], receipt_hash)
+        self._validate_receipt(request, request["module_id"], receipt)
+        entry = self._validate_plan(request, request["module_id"], plan, policy)
+        commit_workspace = self._verified_commit_workspace(plan)
+        lease_fact = self._verified_lease(plan, lease, entry)
+        manifest = self._verified_manifest_suite(request["module_id"], policy.checks[request["check_id"]], receipt)
+        protected = _workspace_snapshot(self.execution_root)
+        if protected[0] != commit_workspace[1]:
+            raise TrustedRunnerError("workspace changed during merge batch check")
+        self._lease_time(lease, now)
+        return {"auth_hash": auth["fact_sha256"], "receipt_hash": receipt_hash,
+                "entry": copy.deepcopy(entry), "commit_workspace": commit_workspace,
+                "lease": lease_fact, "manifest": manifest, "protected": protected}
 
     def run(
         self,

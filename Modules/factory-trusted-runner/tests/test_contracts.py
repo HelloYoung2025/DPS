@@ -89,6 +89,18 @@ def valid_trusted_result():
 
 
 class TrustedTestResultContractTests(unittest.TestCase):
+    def test_shared_owner_merge_corpus_schema_and_runtime_boundaries(self):
+        path = MODULE_ROOT.parent / "factory-merge-controller/tests/fixtures/merge.request.v1.corpus.json"
+        corpus = json.loads(path.read_text(encoding="utf-8"))
+        fixture = FIXTURE_MODULE.MergeBatchFixture()
+        try:
+            for case in corpus["cases"]:
+                with self.subTest(case_id=case["case_id"]):
+                    FIXTURE_MODULE.assert_producer_corpus_case(self, case, fixture)
+            self.assertEqual([], fixture.result_signatures + fixture.request_signatures)
+        finally:
+            fixture.close()
+
     @classmethod
     def setUpClass(cls):
         path = (
