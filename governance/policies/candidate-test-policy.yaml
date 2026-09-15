@@ -287,6 +287,13 @@
       "testTarget": "Modules/zenno-bridge/tests/Dps.ZennoBridge.AuthSimulation.Tests.csproj",
       "testCategory": "Contract",
       "minimumExecutedTests": 2
+    },
+    {
+      "moduleId": "soul-registry",
+      "suiteId": "soul-registry.schema-corpus",
+      "testTarget": "Modules/soul-registry/tests/test_soul_identity_schemas.py",
+      "testCategory": "Contract",
+      "minimumExecutedTests": 6
     }
   ],
   "integrationSuites": [

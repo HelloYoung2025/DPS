@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05 identity owner contract assets, Stage I
+
+- Add four proposed/quarantine-only Soul identity contracts with strict bounded UTF8 codecs, exact canonical commitments and public alias/current/lease declarations. Public DTOs and signed-looking data do not confer authority. No provider, signer, current factory, lease implementation, migration, production adapter or consumer edge is activated.
+- Separate legal Soul v1 Zulu wire from the unchanged 13-field default-.NET-encoder Ledger audit algorithm. Add eight actual-production-oracle differential cases through the existing friend assembly, without changing production Ledger source, old schemas, ten legacy receipt fixtures or dependency locks.
+- Add a shared owner corpus of 411 stable cases (359 schema-applicable), 417 new Soul Contract cases, eight Ledger Contract cases and six required Python schema methods. Preserve all original tests. Stage I does not execute these tests, SDK/restore, real PG or the 65-stage environment; independent validation and real identity capability remain required.
+- Register the new schema suite with Contract floor 6 and regenerate all three governance snapshots using the existing generator. Two snapshots remain byte-identical because no module or dependency edge is added. Scope remains within the 32 authorized product paths; this is an IMPLEMENTED_UNVERIFIED asset slice, not a P05 package PASS or a P06/P11 real-capability handoff.
+
 ### Soul receipt replay across alias-key rotation
 
 - Record versioned request-hash key metadata on new Soul resolution and revocation receipts. Replay uses the recorded key while alias lookup may add newer keys; unchanged requests return the original receipt and changed requests remain conflicts.

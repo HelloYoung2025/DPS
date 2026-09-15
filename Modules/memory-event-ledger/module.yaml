@@ -309,7 +309,7 @@
         "type": "contract",
         "required": true,
         "command": "scripts/dotnet-pinned.sh restore Modules/memory-event-ledger/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/memory-event-ledger/tests --configuration Release --no-restore --filter-trait Category=Contract --minimum-expected-tests 13 --fail-skips on",
-        "environment": "macos-or-hosted exact canonical raw receipt attacks and migration source checks; no PostgreSQL claim",
+        "environment": "macos-or-hosted exact canonical raw receipt attacks, migration source checks and actual legacy Soul audit oracle differential against owner assets; no PostgreSQL or new production provider claim",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
       {

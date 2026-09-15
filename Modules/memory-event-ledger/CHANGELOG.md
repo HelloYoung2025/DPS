@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add test-only differential against the unchanged production Soul audit canonicalizer, using the existing friend assembly and shared owner corpus. Preserve production source, old schema/receipt bytes, dependency locks and current-authority hold. Stage I only; the eight added Contract cases and all original required tests remain unexecuted in this stage.
+
 - Added bounded untrusted `memory.append.request/v2`, plus `memory.event/v2` and `memory.outbox/v2` with canonical serialization, exact authority audit bindings, signed observation evidence, signal-set digests, Soul sequence, and replay chain fields.
 - Permanently disabled the forgeable v1 append path and declared v1 contracts quarantine-only without changing their bytes.
 - Added reference-identity Soul and observation capability seals, fixed non-public authority sources, current/revocation/equality-expiry checks, exact P-256 signed-receipt parsing, and a production `WAITING_EXTERNAL` fail-closed boundary rather than caller-selected roots.

@@ -17,3 +17,9 @@ The 2026-09-14 local builder run passed locked restore/build, 14 unit cases and 
 Rollout order is synthetic test, shadow, bounded canary, rolling waves, and soak. Shadow is forbidden from producing real-world side effects. The feature flag, kill switch, canary rule, rollback target, minimum evidence, and human approval boundary are machine truth in ../module.yaml.
 
 Rollback restores routing and the previous compatible signed BOM. It must not pretend that external side effects or destructive data changes were reversed; those require stop, reconcile, compensate, or restore procedures.
+
+## Identity contract assets remain inactive
+
+P05 adds owner DTO/codec/canonical/schema assets and public port declarations only. The four new manifest entries remain proposed/quarantine-only, without a new consumer edge or runtime handler. No alias verifier, signer, current factory or lease provider is activated; no trust root, nonce store or database migration is introduced. Decoder success, a signed-looking DTO or the old receipt replay path cannot authorize a current mutation.
+
+Freeze and independently verify the actual candidate before any downstream asset handoff. Full current capability and lifecycle/integration work remains outstanding, and this asset slice does not satisfy P05's real-capability dependency exit to P06/P11. Stage I is IMPLEMENTED_UNVERIFIED; Stage II environment and project tests require their own bound authorization.

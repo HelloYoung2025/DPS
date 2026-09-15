@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../../soul-registry/contracts/provided/soul.identity.v1.corpus.json" LogicalName="soul.identity.v1.corpus.json" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="xunit.v3" />

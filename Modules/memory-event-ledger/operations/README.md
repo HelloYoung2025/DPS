@@ -16,3 +16,7 @@ Production routing is disabled until both blockers are resolved:
 Do not substitute a public `SoulResolved`, a caller mapping, a lambda, an environment-selected public key, or test authority. v1 append is permanently disabled and is not a rollback target.
 
 Rollback disables `memory_event_ledger_v2`, stops new append routing, retains v2 rows and pending outbox records, and restores the previous signed BOM. Quarantines and chain heads remain for reconciliation. Privacy export is ordered by `soul_sequence`; correction appends a link plus replacement event; deletion appends a tombstone and rebuilds downstream projections. Until an independent privacy authority exists, correction/deletion writes remain fail-closed.
+
+## Identity first-slice boundary
+
+Only public owner asset compatibility tests and documentation change on the Ledger side. Its production adapter, schema, migrations, current-capability seals and WAITING_EXTERNAL hold remain unchanged. No new current provider, signed root or P06/P11 capability is delivered by a successful DTO parse or audit differential. Full existing required suites and real PG verification remain outstanding.

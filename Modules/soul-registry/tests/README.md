@@ -31,3 +31,11 @@ The five `multi-` fixtures were separately exported by the same frozen old produ
 | multi-revoke.stored-rows.json | `4ff9a0b8aa2a2c1728415c936c22e533b1de186dc912614f383ae8d95a02df3b` |
 
 On 2026-09-14, local locked restore/build passed with zero warnings or errors. Complete compiled-MTP Category runs passed Unit 14/14 and Contract 7/7; real PostgreSQL Integration ran 21 cases with 20 passing, one retained P11 `memory.event/v1` quarantine-only failure, and no skips. The original Manifest Unit frontend produced no output and timed out after 15 seconds under the restricted runner, recorded as INFRA_ERROR. This is unsigned local diagnostic evidence, not successful original Manifest frontend execution, central-gate completion, or a P05 package PASS. Final independent QA remains required.
+
+## P05 identity contract asset coverage
+
+`SoulIdentityContractTests` embeds the owner corpus and executes all 411 stable cases in the existing Contract category. Six additional facts cover inventory, property order and committed scalar mutation, exact request/query matching, historical structure versus expiry, synthetic P-256/P1363 mathematics and explicit frame/nullable encoding. Zero signatures are invalid cryptographic fixtures and never authority. No original Unit/Contract/Integration method or fixture is removed.
+
+The required `soul-registry.schema-corpus` suite uses exactly six unittest methods with a floor of 6. Four family methods consume all schema-applicable subcases with stable IDs; inventory and schema-definition methods check completeness and active real-calendar format validation. Subtests are not counted as discovered methods. Codec-only raw wire attacks remain in the same corpus and are checked by .NET. The corpus and all added tests are implementation assets awaiting the separately authorized Stage II runs and independent QA, not evidence of an executed pass.
+
+Real current provider, signatures rooted in protected configuration, locks, cancellation/commit-unknown lifecycle, migration and full PG/central required gates remain separate required work. This first slice cannot supply P06/P11 with a real identity capability.

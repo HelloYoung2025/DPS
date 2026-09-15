@@ -53,6 +53,38 @@
         "status": "proposed",
         "mode": "active",
         "ownerModule": "soul-registry"
+      },
+      {
+        "contractId": "soul.alias.verify.request",
+        "major": 1,
+        "source": "Modules/soul-registry/contracts/provided/soul.alias.verify.request.v1.schema.json",
+        "status": "proposed",
+        "mode": "quarantine-only",
+        "ownerModule": "soul-registry"
+      },
+      {
+        "contractId": "soul.alias.verification",
+        "major": 1,
+        "source": "Modules/soul-registry/contracts/provided/soul.alias.verification.v1.schema.json",
+        "status": "proposed",
+        "mode": "quarantine-only",
+        "ownerModule": "soul-registry"
+      },
+      {
+        "contractId": "soul.current.query",
+        "major": 1,
+        "source": "Modules/soul-registry/contracts/provided/soul.current.query.v1.schema.json",
+        "status": "proposed",
+        "mode": "quarantine-only",
+        "ownerModule": "soul-registry"
+      },
+      {
+        "contractId": "soul.current.resolution",
+        "major": 1,
+        "source": "Modules/soul-registry/contracts/provided/soul.current.resolution.v1.schema.json",
+        "status": "proposed",
+        "mode": "quarantine-only",
+        "ownerModule": "soul-registry"
       }
     ],
     "consumed": []
@@ -172,7 +204,15 @@
         "type": "contract",
         "required": true,
         "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Contract --minimum-expected-tests 1 --fail-skips on",
-        "environment": "macos-or-hosted",
+        "environment": "macos-or-hosted complete original Contract suite plus strict identity corpus, canonical commitments and synthetic signature mathematics; no production authority claim",
+        "evidenceLevel": "CONTRACT_VERIFIED"
+      },
+      {
+        "id": "soul-registry.schema-corpus",
+        "type": "contract",
+        "required": true,
+        "command": "python3.12 -m unittest discover -s Modules/soul-registry/tests -p test_soul_identity_schemas.py",
+        "environment": "locked requirements-ci.txt jsonschema Draft 2020-12 with active format checking; isolated discovery of exactly six provider-owned test methods and all applicable shared corpus cases",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
       {
@@ -191,6 +231,18 @@
     "moduleMajor": 0,
     "supportedContractMajors": {
       "soul.resolved": [
+        1
+      ],
+      "soul.alias.verify.request": [
+        1
+      ],
+      "soul.alias.verification": [
+        1
+      ],
+      "soul.current.query": [
+        1
+      ],
+      "soul.current.resolution": [
         1
       ]
     },

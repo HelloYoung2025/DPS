@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="provided/soul.resolved.v1.schema.json" Pack="true" PackagePath="contracts" />
+    <None Include="provided/*.schema.json" Pack="true" PackagePath="contracts" />
+    <None Include="provided/soul.identity.v1.corpus.json" Pack="true" PackagePath="contracts" />
   </ItemGroup>
 </Project>
