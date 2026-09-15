@@ -15,3 +15,19 @@ Legacy-native-stop tests prove by reflection that the product assembly contains 
 These tests do not invoke ZennoDroid or a phone. Required suites are labelled unit, contract, or `SIMULATION`; Unix diagnostics are non-counting. None can issue Windows or device verification. Windows ACL evidence is `NOT_RUN`, not a passing branch inside a cross-platform test.
 
 The current locked .NET restore is `INFRA_ERROR` because of local CSSM/NuGet audit-source failures. A source build and direct in-process MTP executable run are diagnostic only; they do not replace the required locked wrapper or raise the evidence level.
+
+## P10 lease and terminal replay regressions
+
+The lease slice adds 36 black-box cases through the existing `CommandProcessor.ProcessAsync` entry: 23 Unit and 13 Integration cases. The original implementation produced 18 new Unit assertion failures and 13 new Integration assertion failures, while the original 13 Unit and 47 Integration cases still passed. The same assertions are retained in the candidate; the expected resulting totals are 36 Unit and 60 Integration. Original wrapper floors, filters and fail-on-skip behavior remain unchanged.
+
+- Equality and one tick after expiry are tested before initial reservation, after ACCEPTED Journal persistence, after MarkAccepted persistence, after MarkTransportAttempted persistence, and on both explicitly unacknowledged result and exception retry paths.
+- Non-UTC clock values and observed clock rollback fail closed. A process-local clock fault remains latched for subsequent new execution requests.
+- Actual ProcessAsync success, failure, shadow, acknowledged unknown and uncertain submission results are replayed after expiry. Memory-store mutation counters and reopened durable state/Journal bytes prove no new writes or native calls during completed replay. The durable snapshot starts after process construction, which still persists its normal process epoch.
+- Wrong hashes, changed scope, malformed scope and unknown major versions cannot expose a stored receipt. A concurrently active duplicate does not call the reserving store entry, and the original ACCEPTED wait cannot authorize a later expired native call.
+- A real owner Journal append followed by interrupted finalization is reconciled after expiry with the exact stored entry and payload. A reopened possibly-submitted attempt retains UNKNOWN_OUTCOME without redispatch. Native results that arrive after expiry retain their acknowledgement and postcondition truth.
+
+The existing real child-process crash/restart suite is retained. The new reopened-store tests use `EvidenceKind=SIMULATION`; they do not relabel a same-process fixture as a child-process crash. New helpers are `LeaseRegressionClock`, `LeaseRegressionTransport`, `LeaseRegressionJournal` and `LeaseRegressionStore`. The latter forwards the new read-only store query without incrementing its mutation counter.
+
+`ICommandStateStore.ReadExisting` is an explicit public C# interface addition. All six in-repository implementations are covered: InMemoryCommandStateStore, DurableCommandStateStore, FailOnceFinalizeStore, BlockingClaimStateStore, CrashWindowStateStore, and the new LeaseRegressionStore. Unknown external implementations require adaptation; binary compatibility is not asserted. No owner wire contract or Journal format changes.
+
+Linux outcomes are local simulation results. Worker Unit/Contract, Journal Unit/Contract and Supervisor Unit/Contract/A-B retain their declared macOS/Windows environment gaps even if the Linux runs pass. Full candidate results and independent QA are bound in provider-local product receipts, not inferred from these test counts.

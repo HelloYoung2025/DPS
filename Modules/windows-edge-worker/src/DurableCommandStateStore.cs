@@ -118,6 +118,19 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
         }
     }
 
+    public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch)
+    {
+        lock (_sync)
+        {
+            EnsureUsable();
+            RequireCurrentProcessEpoch(processEpoch);
+            ValidateIdempotencyAndHash(idempotencyKey, requestSha256);
+            return _states.TryGetValue(idempotencyKey, out var existing)
+                ? DescribeExisting(existing, requestSha256, processEpoch)
+                : null;
+        }
+    }
+
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch)
     {
         lock (_sync)
@@ -144,68 +157,38 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
                 return new BeginResult("NEW", created.Phase, false, 0, null);
             }
 
-            if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
-            {
-                return new BeginResult(
-                    "CONFLICT",
-                    existing.Phase,
-                    AcknowledgementFor(existing.Phase),
-                    existing.DispatchAttemptCount,
-                    null);
-            }
-
-            if (existing.Phase == CommandExecutionPhase.Completed)
-            {
-                return new BeginResult(
-                    "DUPLICATE",
-                    existing.Phase,
-                    existing.Receipt!.DispatchAcknowledged,
-                    existing.DispatchAttemptCount,
-                    existing.Receipt);
-            }
-
-            if (existing.Phase == CommandExecutionPhase.CompletionPrepared)
+            var result = DescribeExisting(existing, requestSha256, processEpoch);
+            if (result.Status is "RECONCILE_COMPLETION" or "RESUME_PRE_DISPATCH" or "RECOVER_UNCERTAIN")
             {
                 var claimed = existing with { ClaimedProcessEpoch = processEpoch };
                 PersistState(idempotencyKey, claimed, processEpoch);
                 _states[idempotencyKey] = claimed;
-                return new BeginResult(
-                    "RECONCILE_COMPLETION",
-                    claimed.Phase,
-                    claimed.Receipt!.DispatchAcknowledged,
-                    claimed.DispatchAttemptCount,
-                    claimed.Receipt,
-                    claimed.PreparedTerminalWrite,
-                    claimed.PreparedJournalContext);
             }
-
-            if (existing.ClaimedProcessEpoch == processEpoch)
-            {
-                return new BeginResult(
-                    "IN_PROGRESS",
-                    existing.Phase,
-                    AcknowledgementFor(existing.Phase),
-                    existing.DispatchAttemptCount,
-                    null);
-            }
-
-            var reclaimed = existing with { ClaimedProcessEpoch = processEpoch };
-            PersistState(idempotencyKey, reclaimed, processEpoch);
-            _states[idempotencyKey] = reclaimed;
-            return reclaimed.Phase is CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted
-                ? new BeginResult(
-                    "RESUME_PRE_DISPATCH",
-                    reclaimed.Phase,
-                    false,
-                    reclaimed.DispatchAttemptCount,
-                    null)
-                : new BeginResult(
-                    "RECOVER_UNCERTAIN",
-                    reclaimed.Phase,
-                    AcknowledgementFor(reclaimed.Phase),
-                    reclaimed.DispatchAttemptCount,
-                    null);
+            return result;
         }
+    }
+
+    private static BeginResult DescribeExisting(State existing, string requestSha256, long processEpoch)
+    {
+        if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
+            return new BeginResult("CONFLICT", existing.Phase, AcknowledgementFor(existing.Phase),
+                existing.DispatchAttemptCount, null);
+
+        var status = existing.Phase switch
+        {
+            CommandExecutionPhase.Completed => "DUPLICATE",
+            CommandExecutionPhase.CompletionPrepared => "RECONCILE_COMPLETION",
+            _ when existing.ClaimedProcessEpoch == processEpoch => "IN_PROGRESS",
+            CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted => "RESUME_PRE_DISPATCH",
+            _ => "RECOVER_UNCERTAIN"
+        };
+        var terminal = existing.Phase is CommandExecutionPhase.Completed or CommandExecutionPhase.CompletionPrepared;
+        var prepared = existing.Phase == CommandExecutionPhase.CompletionPrepared;
+        return new BeginResult(status, existing.Phase,
+            terminal ? existing.Receipt!.DispatchAcknowledged : AcknowledgementFor(existing.Phase),
+            existing.DispatchAttemptCount, terminal ? existing.Receipt : null,
+            prepared ? existing.PreparedTerminalWrite : null,
+            prepared ? existing.PreparedJournalContext : null);
     }
 
     public void MarkAccepted(string idempotencyKey, long processEpoch) =>

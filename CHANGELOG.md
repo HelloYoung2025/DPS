@@ -1340,3 +1340,11 @@ Backups/
 - Integrate the five exact DTO boundary candidate files from d798c4c2d763673549fc6757a512349bf603e70b onto b0155df6c320cd5fb542a4e4b55005917dd82847. Enforce exact 2.0.0 versions and canonical round-trips through 32 interest signals; retain v1 quarantine and capability checks.
 - This local six-file integration includes this appended entry. Independent artifact builds, original Memory Unit/Contract commands, and environment evidence are bound separately to the exact candidate. No prior test result is inherited.
 - P11 remains PARTIAL: the two previously reported PostgreSQL failures, unfinished production authority and Outbox path, and unresolved consumer compatibility remain open. Production composition remains WAITING_EXTERNAL. No central gate, protected merge, Owner acceptance, formal verification level, or deployment is claimed.
+
+
+## 2026-09-15 P10 Worker lease and terminal replay
+
+- Separate structural/scope/hash validation, read-only state lookup and freshness checks for new execution. Preserve expired same-hash completed receipts without new state or Journal writes, and retain Prepared/possibly-submitted recovery truth.
+- Recheck the trusted UTC clock and lease before every native attempt and after durable attempt persistence. Reject expiry equality, non-UTC clock values and observed rollback; retain consumed attempt budgets and unfinished drain state when no native call was made.
+- Add the public C# ICommandStateStore.ReadExisting member and adapt all six repository implementations, including the new regression adapter. TryBegin still reserves/claims; no unknown external binary compatibility is asserted. No wire, Journal format, owner contract, Manifest, lock or wrapper changes.
+- Retain 36 ProcessAsync black-box regressions from the frozen original-implementation red run: 18 new Unit assertions and 13 new Integration assertions failed as intended, with original suites and five new controls passing. Candidate build/full-suite results and independent QA are recorded separately in provider-local frozen product receipts. Linux checks do not remove declared-OS gaps or complete P10/P21 production work.

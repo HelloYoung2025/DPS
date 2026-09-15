@@ -611,6 +611,149 @@ public sealed class DurableHostTests
             terminalProof.GetProperty("entry_checksum").GetString());
     }
 
+    [Theory]
+    [InlineData("success")]
+    [InlineData("failed")]
+    [InlineData("shadow")]
+    [InlineData("unknown")]
+    [InlineData("uncertain")]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    public async Task Durable_process_created_terminal_replay_after_expiry_does_not_write(string outcome)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.WithHash(WorkerTests.Command() with { Shadow = outcome == "shadow" });
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        var native = LeaseRegressionTransport.ForOutcome(outcome);
+        CommandReceipt first;
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        await using (var journal = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            first = await new CommandProcessor(native, journal, store, clock).ProcessAsync(command, token);
+            Assert.Equal(LeaseRegressionTransport.ExpectedStatus(outcome), first.ResultStatus);
+        }
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        using var reopened = DurableCommandStateStore.Open(runtime.Path);
+        await using var reopenedJournal = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        var replacement = LeaseRegressionTransport.ForOutcome("success");
+        var tracked = new LeaseRegressionStore(reopened);
+        var processor = new CommandProcessor(replacement, reopenedJournal, tracked, clock);
+        var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        var stateBytes = File.ReadAllBytes(statePath);
+        var journalBytes = File.ReadAllBytes(journalPath);
+        var writes = tracked.Mutations;
+        var replay = await processor.ProcessAsync(command, token);
+        Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
+        Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+        Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
+        Assert.Equal(writes, tracked.Mutations);
+        Assert.Equal(0, replacement.Calls);
+    }
+
+    [Theory]
+    [InlineData("ACCEPTED", 0)]
+    [InlineData("ACCEPTED", 1)]
+    [InlineData("MarkAccepted", 0)]
+    [InlineData("MarkAccepted", 1)]
+    [InlineData("MarkTransportAttempted", 0)]
+    [InlineData("MarkTransportAttempted", 1)]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    public async Task Durable_persistence_crossing_expiry_never_submits(string boundary, int ticks)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        using var inner = DurableCommandStateStore.Open(runtime.Path);
+        await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        void Advance(string point)
+        {
+            if (point == boundary) clock.Now = command.LeaseExpiresAt!.Value.AddTicks(ticks);
+        }
+        var store = new LeaseRegressionStore(inner, Advance);
+        var journal = new LeaseRegressionJournal(owner, request =>
+        {
+            Advance(request.EntryType);
+            return Task.CompletedTask;
+        });
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var result = await new CommandProcessor(native, journal, store, clock).ProcessAsync(command, token);
+        Assert.Equal(0, native.Calls);
+        Assert.Equal("REJECTED", result.ResultStatus);
+        Assert.False(result.RetryAllowed);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    public async Task Expired_prepared_completion_reconciles_exact_terminal_entry_before_replay()
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        await using (var journal = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            var processor = new CommandProcessor(native, journal, new FailOnceFinalizeStore(store), clock);
+            await Assert.ThrowsAsync<IOException>(() => processor.ProcessAsync(command, token));
+            Assert.Equal(1, store.GetDrainSnapshot().CompletionPendingCount);
+        }
+        Assert.Equal(1, native.Calls);
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        var originalJournal = File.ReadAllBytes(journalPath);
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        using var reopened = DurableCommandStateStore.Open(runtime.Path);
+        await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        var replacement = LeaseRegressionTransport.ForOutcome("success");
+        var recovered = new CommandProcessor(replacement, owner, reopened, clock);
+        var result = await recovered.ProcessAsync(command, token);
+        Assert.Equal("VERIFIED_SUCCESS", result.ResultStatus);
+        Assert.True(result.Duplicate);
+        Assert.True(reopened.GetDrainSnapshot().IsDrained);
+        Assert.Equal(originalJournal, File.ReadAllBytes(journalPath));
+        var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+        var stateBytes = File.ReadAllBytes(statePath);
+        Assert.Equal(result, await recovered.ProcessAsync(command, token));
+        Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+        Assert.Equal(originalJournal, File.ReadAllBytes(journalPath));
+        Assert.Equal(0, replacement.Calls);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    public async Task Expired_restart_after_possible_submission_preserves_unknown_without_redispatch()
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        var interrupted = new LeaseRegressionTransport((_, _) =>
+            Task.FromException<NativeDispatchResult>(new IOException("interrupted after possible submission")));
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        await using (var journal = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            await Assert.ThrowsAsync<IOException>(() => new CommandProcessor(interrupted, journal, store, clock)
+                .ProcessAsync(command, token));
+            Assert.Equal(1, store.GetDrainSnapshot().UncertainCount);
+        }
+        Assert.Equal(1, interrupted.Calls);
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        using var reopened = DurableCommandStateStore.Open(runtime.Path);
+        await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var result = await new CommandProcessor(native, owner, reopened, clock).ProcessAsync(command, token);
+        Assert.Equal("UNKNOWN_OUTCOME", result.ResultStatus);
+        Assert.Null(result.DispatchAcknowledged);
+        Assert.False(result.RetryAllowed);
+        Assert.Equal(0, native.Calls);
+    }
+
     private const string IdempotencyKey =
         "idem_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     private const string RequestSha256 =

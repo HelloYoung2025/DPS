@@ -50,6 +50,8 @@ public interface IWorkerJournal
 public interface ICommandStateStore
 {
     long BeginProcessEpoch();
+    // Read-only scoped snapshot: never reserve a key or claim a process epoch.
+    BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch);
     BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch);
     void MarkAccepted(string idempotencyKey, long processEpoch);
     int MarkTransportAttempted(string idempotencyKey, long processEpoch);
@@ -355,6 +357,17 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
         lock (_sync) return checked(++_processEpoch);
     }
 
+    public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch)
+    {
+        lock (_sync)
+        {
+            RequireCurrentProcessEpoch(processEpoch);
+            return _states.TryGetValue(idempotencyKey, out var existing)
+                ? DescribeExisting(existing, requestSha256, processEpoch)
+                : null;
+        }
+    }
+
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch)
     {
         lock (_sync)
@@ -366,43 +379,36 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
                 return new BeginResult("NEW", CommandExecutionPhase.Reserved, false, 0, null);
             }
 
-            if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
-            {
-                return new BeginResult(
-                    "CONFLICT", existing.Phase, AcknowledgementFor(existing.Phase), existing.DispatchAttemptCount, null);
-            }
-
-            if (existing.Phase == CommandExecutionPhase.Completed)
-                return new BeginResult(
-                    "DUPLICATE", existing.Phase, existing.Receipt!.DispatchAcknowledged,
-                    existing.DispatchAttemptCount, existing.Receipt);
-
-            if (existing.Phase == CommandExecutionPhase.CompletionPrepared)
+            var result = DescribeExisting(existing, requestSha256, processEpoch);
+            if (result.Status is "RECONCILE_COMPLETION" or "RESUME_PRE_DISPATCH" or "RECOVER_UNCERTAIN")
             {
                 existing.ClaimedProcessEpoch = processEpoch;
-                return new BeginResult(
-                    "RECONCILE_COMPLETION",
-                    existing.Phase,
-                    existing.Receipt!.DispatchAcknowledged,
-                    existing.DispatchAttemptCount,
-                    existing.Receipt,
-                    existing.PreparedTerminalWrite,
-                    existing.PreparedJournalContext);
             }
-
-            if (existing.ClaimedProcessEpoch == processEpoch)
-                return new BeginResult(
-                    "IN_PROGRESS", existing.Phase, AcknowledgementFor(existing.Phase),
-                    existing.DispatchAttemptCount, null);
-
-            existing.ClaimedProcessEpoch = processEpoch;
-            return existing.Phase is CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted
-                ? new BeginResult(
-                    "RESUME_PRE_DISPATCH", existing.Phase, false, existing.DispatchAttemptCount, null)
-                : new BeginResult(
-                    "RECOVER_UNCERTAIN", existing.Phase, AcknowledgementFor(existing.Phase),
-                    existing.DispatchAttemptCount, null);
+            return result;
         }
+    }
+
+    private static BeginResult DescribeExisting(State existing, string requestSha256, long processEpoch)
+    {
+        if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
+            return new BeginResult("CONFLICT", existing.Phase, AcknowledgementFor(existing.Phase),
+                existing.DispatchAttemptCount, null);
+
+        var status = existing.Phase switch
+        {
+            CommandExecutionPhase.Completed => "DUPLICATE",
+            CommandExecutionPhase.CompletionPrepared => "RECONCILE_COMPLETION",
+            _ when existing.ClaimedProcessEpoch == processEpoch => "IN_PROGRESS",
+            CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted => "RESUME_PRE_DISPATCH",
+            _ => "RECOVER_UNCERTAIN"
+        };
+        var terminal = existing.Phase is CommandExecutionPhase.Completed or CommandExecutionPhase.CompletionPrepared;
+        var prepared = existing.Phase == CommandExecutionPhase.CompletionPrepared;
+        return new BeginResult(status, existing.Phase,
+            terminal ? existing.Receipt!.DispatchAcknowledged : AcknowledgementFor(existing.Phase),
+            existing.DispatchAttemptCount, terminal ? existing.Receipt : null,
+            prepared ? existing.PreparedTerminalWrite : null,
+            prepared ? existing.PreparedJournalContext : null);
     }
 
     public void MarkAccepted(string idempotencyKey, long processEpoch) =>
@@ -584,6 +590,9 @@ public sealed class CommandProcessor
     private readonly TimeProvider _timeProvider;
     private readonly long _processEpoch;
     private readonly object _intakeSync = new();
+    private readonly object _clockSync = new();
+    private DateTimeOffset? _lastUtcNow;
+    private bool _clockFaulted;
     private bool _accepting;
     private int _inFlight;
 
@@ -643,7 +652,7 @@ public sealed class CommandProcessor
 
         try
         {
-            var validation = Validate(command);
+            var validation = WorkerCommandValidator.GetCommandError(command, now: null);
             if (validation is not null) return Rejected(command, validation);
 
             var actualHash = CommandHasher.Compute(command);
@@ -653,7 +662,19 @@ public sealed class CommandProcessor
             }
 
             var idempotencyKey = command.IdempotencyKey!;
-            var begin = _stateStore.TryBegin(idempotencyKey, actualHash, _processEpoch);
+            var begin = _stateStore.ReadExisting(idempotencyKey, actualHash, _processEpoch);
+            if (begin is null || begin.Status == "RESUME_PRE_DISPATCH")
+            {
+                var freshness = ValidateFreshness(command);
+                if (freshness is not null) return Rejected(command, freshness);
+                // Reservation stays after freshness. TryBegin rechecks concurrent state changes.
+                begin = _stateStore.TryBegin(idempotencyKey, actualHash, _processEpoch);
+            }
+            else if (begin.Status is "RECONCILE_COMPLETION" or "RECOVER_UNCERTAIN")
+            {
+                // This only claims recovery of existing facts, never a fresh native execution.
+                begin = _stateStore.TryBegin(idempotencyKey, actualHash, _processEpoch);
+            }
             if (begin.Status == "CONFLICT")
             {
                 return new CommandReceipt(
@@ -673,6 +694,9 @@ public sealed class CommandProcessor
                         Duplicate = true
                     };
                 }
+
+                var freshness = ValidateFreshness(command);
+                if (freshness is not null) return Rejected(command, freshness);
 
                 return new CommandReceipt(
                     command.CommandId, command.IdempotencyKey, "IN_PROGRESS", false, null, null,
@@ -738,7 +762,16 @@ public sealed class CommandProcessor
             NativeDispatchResult native;
             for (;;)
             {
+                var freshness = ValidateFreshness(command);
+                if (freshness is not null) return Rejected(command, freshness);
                 var attempt = _stateStore.MarkTransportAttempted(idempotencyKey, _processEpoch);
+                freshness = ValidateFreshness(command);
+                if (freshness is not null)
+                {
+                    // No native call occurred. Preserve the consumed budget, without inventing uncertainty.
+                    _stateStore.MarkPreDispatchRetry(idempotencyKey, _processEpoch);
+                    return Rejected(command, freshness);
+                }
                 try
                 {
                     native = await _transport.DispatchAsync(command, cancellationToken).ConfigureAwait(false);
@@ -915,9 +948,20 @@ public sealed class CommandProcessor
         return receipt;
     }
 
-    private string? Validate(WorkerCommand command)
+    private string? ValidateFreshness(WorkerCommand command)
     {
-        return WorkerCommandValidator.GetCommandError(command, _timeProvider.GetUtcNow());
+        lock (_clockSync)
+        {
+            if (_clockFaulted) return "trusted UTC clock requires worker restart";
+            var now = _timeProvider.GetUtcNow();
+            if (now.Offset != TimeSpan.Zero || (_lastUtcNow is not null && now < _lastUtcNow.Value))
+            {
+                _clockFaulted = true;
+                return "trusted UTC clock is non-UTC or moved backwards";
+            }
+            _lastUtcNow = now;
+            return command.LeaseExpiresAt <= now ? "lease is expired" : null;
+        }
     }
 
     private static CommandReceipt Rejected(WorkerCommand command, string detail) =>

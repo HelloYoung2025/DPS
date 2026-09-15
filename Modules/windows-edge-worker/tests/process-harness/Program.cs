@@ -366,6 +366,9 @@ internal sealed class CrashWindowStateStore(
 {
     public long BeginProcessEpoch() => inner.BeginProcessEpoch();
 
+    public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch) =>
+        inner.ReadExisting(idempotencyKey, requestSha256, processEpoch);
+
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch) =>
         inner.TryBegin(idempotencyKey, requestSha256, processEpoch);
 

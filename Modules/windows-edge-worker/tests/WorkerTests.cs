@@ -801,7 +801,7 @@ public sealed class WorkerTests
     private static FakeTransport SuccessfulTransport(string detail = "verified") =>
         new(new NativeDispatchResult(true, NativeStatus.Success, true, detail));
 
-    private static WorkerCommand Command()
+    internal static WorkerCommand Command()
     {
         var command = new WorkerCommand(
             "1.0",
@@ -836,7 +836,7 @@ public sealed class WorkerTests
         return WithHash(command);
     }
 
-    private static WorkerCommand WithHash(WorkerCommand command) =>
+    internal static WorkerCommand WithHash(WorkerCommand command) =>
         command with { RequestSha256 = CommandHasher.Compute(command) };
 
     private static InMemoryCommandStateStore StateAt(WorkerCommand command, CommandExecutionPhase phase)
@@ -994,6 +994,8 @@ internal sealed class FailOnceFinalizeStore(ICommandStateStore inner) : ICommand
     private bool _failed;
 
     public long BeginProcessEpoch() => inner.BeginProcessEpoch();
+    public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch) =>
+        inner.ReadExisting(idempotencyKey, requestSha256, processEpoch);
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch) =>
         inner.TryBegin(idempotencyKey, requestSha256, processEpoch);
     public void MarkAccepted(string idempotencyKey, long processEpoch) =>
@@ -1055,6 +1057,8 @@ internal sealed class BlockingClaimStateStore : ICommandStateStore, IDisposable
 
     public void ReleaseClaim() => _releaseClaim.Set();
 
+    public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch) =>
+        throw new NotSupportedException();
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch) =>
         throw new NotSupportedException();
     public void MarkAccepted(string idempotencyKey, long processEpoch) =>
@@ -1092,4 +1096,292 @@ internal static class WorkerTestHash
 
     public static string Sha256(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(StrictUtf8.GetBytes(value)));
+}
+
+public sealed class LeaseRegressionTests
+{
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [Trait("Category", "Unit")]
+    public async Task Expired_new_command_never_reserves_or_dispatches(int ticks)
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.LeaseExpiresAt!.Value.AddTicks(ticks));
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var journal = new InMemoryJournal();
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var processor = new CommandProcessor(native, journal, store, clock);
+        var writes = store.Mutations;
+        var result = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal("REJECTED", result.ResultStatus);
+        Assert.Equal(0, native.Calls);
+        Assert.Equal(writes, store.Mutations);
+        Assert.Empty(journal.Writes);
+        Assert.True(store.GetDrainSnapshot().IsDrained);
+    }
+
+    [Theory]
+    [InlineData("ACCEPTED", 0)]
+    [InlineData("ACCEPTED", 1)]
+    [InlineData("MarkAccepted", 0)]
+    [InlineData("MarkAccepted", 1)]
+    [InlineData("MarkTransportAttempted", 0)]
+    [InlineData("MarkTransportAttempted", 1)]
+    [Trait("Category", "Unit")]
+    public async Task Persistence_wait_crossing_expiry_blocks_first_native(string boundary, int ticks)
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        void Advance(string point)
+        {
+            if (point == boundary) clock.Now = command.LeaseExpiresAt!.Value.AddTicks(ticks);
+        }
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore(), Advance);
+        var journal = new LeaseRegressionJournal(new InMemoryJournal(), request =>
+        {
+            Advance(request.EntryType);
+            return Task.CompletedTask;
+        });
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var result = await new CommandProcessor(native, journal, store, clock)
+            .ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(0, native.Calls);
+        Assert.Equal("REJECTED", result.ResultStatus);
+        Assert.False(result.RetryAllowed);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 0)]
+    [InlineData(true, 1)]
+    [Trait("Category", "Unit")]
+    public async Task Clearly_not_submitted_retry_crossing_expiry_never_calls_native_again(bool exception, int ticks)
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var native = new LeaseRegressionTransport((_, _) =>
+        {
+            clock.Now = command.LeaseExpiresAt!.Value.AddTicks(ticks);
+            return exception
+                ? Task.FromException<NativeDispatchResult>(new TransportDispatchException("not submitted", false))
+                : Task.FromResult(new NativeDispatchResult(false, NativeStatus.Failed, false, "not submitted"));
+        });
+        var result = await new CommandProcessor(native, new InMemoryJournal(), new InMemoryCommandStateStore(), clock)
+            .ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(1, native.Calls);
+        Assert.Equal("REJECTED", result.ResultStatus);
+        Assert.False(result.RetryAllowed);
+    }
+
+    [Theory]
+    [InlineData("non-utc")]
+    [InlineData("rollback")]
+    [Trait("Category", "Unit")]
+    public async Task Untrusted_clock_blocks_native_and_remains_fail_closed(string fault)
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        if (fault == "non-utc") clock.Now = clock.Now.ToOffset(TimeSpan.FromHours(1));
+        var journal = new LeaseRegressionJournal(new InMemoryJournal(), _ =>
+        {
+            if (fault == "rollback") clock.Now = command.OccurredAt!.Value.AddTicks(-1);
+            return Task.CompletedTask;
+        });
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var processor = new CommandProcessor(native, journal, store, clock);
+        var result = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(0, native.Calls);
+        Assert.Equal("REJECTED", result.ResultStatus);
+        clock.Now = command.OccurredAt!.Value.AddSeconds(1);
+        var other = WorkerTests.WithHash(command with { IdempotencyKey = "idem_" + new string('f', 64) });
+        var mutations = store.Mutations;
+        Assert.Equal("REJECTED", (await processor.ProcessAsync(other, TestContext.Current.CancellationToken)).ResultStatus);
+        Assert.Equal(mutations, store.Mutations);
+        Assert.Equal(0, native.Calls);
+    }
+
+    [Theory]
+    [InlineData("success")]
+    [InlineData("failed")]
+    [InlineData("shadow")]
+    [InlineData("unknown")]
+    [InlineData("uncertain")]
+    [Trait("Category", "Unit")]
+    public async Task Process_created_terminal_receipt_replays_after_expiry_without_writes(string outcome)
+    {
+        var command = WorkerTests.WithHash(WorkerTests.Command() with { Shadow = outcome == "shadow" });
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var journal = new InMemoryJournal();
+        var native = LeaseRegressionTransport.ForOutcome(outcome);
+        var processor = new CommandProcessor(native, journal, store, clock);
+        var first = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(LeaseRegressionTransport.ExpectedStatus(outcome), first.ResultStatus);
+        clock.Now = command.LeaseExpiresAt!.Value;
+        var writes = store.Mutations;
+        var journalWrites = journal.Writes.Count;
+        var calls = native.Calls;
+        var replay = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
+        Assert.Equal(writes, store.Mutations);
+        Assert.Equal(journalWrites, journal.Writes.Count);
+        Assert.Equal(calls, native.Calls);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Expired_mismatched_hash_scope_or_major_never_leaks_completed_receipt()
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var journal = new InMemoryJournal();
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var processor = new CommandProcessor(native, journal, store, clock);
+        var first = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal("VERIFIED_SUCCESS", first.ResultStatus);
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        var writes = store.Mutations;
+        var journalWrites = journal.Writes.Count;
+        foreach (var invalid in new[]
+        {
+            command with { RequestSha256 = new string('0', 64) },
+            WorkerTests.WithHash(command with { SoulId = "soul_" + new string('f', 64) }),
+            command with { SoulId = "unknown" },
+            WorkerTests.WithHash(command with { SchemaVersion = "2.0" })
+        })
+        {
+            var result = await processor.ProcessAsync(invalid, TestContext.Current.CancellationToken);
+            Assert.Contains(result.ResultStatus, new[] { "REJECTED", "QUARANTINED" });
+            Assert.False(result.Duplicate);
+        }
+        Assert.Equal(writes, store.Mutations);
+        Assert.Equal(journalWrites, journal.Writes.Count);
+        Assert.Equal(1, native.Calls);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Concurrent_duplicate_does_not_reserve_and_accepted_wait_cannot_outlive_lease()
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var journal = new LeaseRegressionJournal(new InMemoryJournal(), async request =>
+        {
+            if (request.EntryType != "ACCEPTED") return;
+            entered.SetResult();
+            await release.Task;
+        });
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var processor = new CommandProcessor(native, journal, store, clock);
+        var pending = processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            var writes = store.Mutations;
+            var duplicate = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+            Assert.Equal("IN_PROGRESS", duplicate.ResultStatus);
+            Assert.Equal(writes, store.Mutations);
+        }
+        finally
+        {
+            clock.Now = command.LeaseExpiresAt!.Value;
+            release.SetResult();
+            await pending;
+        }
+        Assert.Equal("REJECTED", (await pending).ResultStatus);
+        Assert.Equal(0, native.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Unit")]
+    public async Task Lease_expiring_after_submission_preserves_ack_or_uncertainty(bool uncertain)
+    {
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var native = new LeaseRegressionTransport((_, _) =>
+        {
+            clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+            return uncertain
+                ? Task.FromException<NativeDispatchResult>(new TransportDispatchException("ack unavailable", null))
+                : Task.FromResult(new NativeDispatchResult(true, NativeStatus.Success, true, "late verified ack"));
+        });
+        var result = await new CommandProcessor(native, new InMemoryJournal(), new InMemoryCommandStateStore(), clock)
+            .ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal(1, native.Calls);
+        Assert.Equal(uncertain ? "UNKNOWN_OUTCOME" : "VERIFIED_SUCCESS", result.ResultStatus);
+        if (uncertain) Assert.Null(result.DispatchAcknowledged);
+        else Assert.True(result.DispatchAcknowledged);
+        Assert.False(result.RetryAllowed);
+    }
+}
+
+internal sealed class LeaseRegressionClock(DateTimeOffset now) : TimeProvider
+{
+    public DateTimeOffset Now { get; set; } = now;
+    public override DateTimeOffset GetUtcNow() => Now;
+}
+
+internal sealed class LeaseRegressionTransport(Func<WorkerCommand, CancellationToken, Task<NativeDispatchResult>> dispatch) : INativeTransport
+{
+    public int Calls { get; private set; }
+    public Task<NativeDispatchResult> DispatchAsync(WorkerCommand command, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return dispatch(command, cancellationToken);
+    }
+    public static string ExpectedStatus(string outcome) => outcome switch
+    {
+        "shadow" => "SHADOWED", "failed" => "FAILED",
+        "unknown" or "uncertain" => "UNKNOWN_OUTCOME", _ => "VERIFIED_SUCCESS"
+    };
+    public static LeaseRegressionTransport ForOutcome(string outcome) => new((_, _) =>
+        outcome == "uncertain"
+            ? Task.FromException<NativeDispatchResult>(new TransportDispatchException("unknown submission", null))
+            : Task.FromResult(new NativeDispatchResult(true,
+                outcome == "failed" ? NativeStatus.Failed : outcome == "unknown" ? NativeStatus.UnknownOutcome : NativeStatus.Success,
+                outcome is not ("failed" or "unknown"), "process-created " + outcome)));
+}
+
+internal sealed class LeaseRegressionJournal(IWorkerJournal inner, Func<WorkerJournalAppendRequest, Task> after) : IWorkerJournal
+{
+    public async Task<WorkerJournalAppendReceipt> AppendAsync(WorkerJournalAppendRequest request, CancellationToken cancellationToken)
+    {
+        var receipt = await inner.AppendAsync(request, cancellationToken);
+        await after(request);
+        return receipt;
+    }
+}
+
+internal sealed class LeaseRegressionStore(ICommandStateStore inner, Action<string>? after = null) : ICommandStateStore
+{
+    public int Mutations { get; private set; }
+    public long BeginProcessEpoch() { Mutations++; return inner.BeginProcessEpoch(); }
+    public BeginResult? ReadExisting(string key, string hash, long epoch) => inner.ReadExisting(key, hash, epoch);
+    public BeginResult TryBegin(string key, string hash, long epoch) { Mutations++; return inner.TryBegin(key, hash, epoch); }
+    public void MarkAccepted(string key, long epoch) { Mutations++; inner.MarkAccepted(key, epoch); after?.Invoke("MarkAccepted"); }
+    public int MarkTransportAttempted(string key, long epoch)
+    {
+        Mutations++;
+        var attempt = inner.MarkTransportAttempted(key, epoch);
+        after?.Invoke("MarkTransportAttempted");
+        return attempt;
+    }
+    public void MarkPreDispatchRetry(string key, long epoch) { Mutations++; inner.MarkPreDispatchRetry(key, epoch); }
+    public void MarkDispatchAcknowledged(string key, long epoch) { Mutations++; inner.MarkDispatchAcknowledged(key, epoch); }
+    public void PrepareCompletion(string key, long epoch, WorkerJournalContext context, CommandReceipt receipt, WorkerJournalWrite write)
+    { Mutations++; inner.PrepareCompletion(key, epoch, context, receipt, write); }
+    public void FinalizeCompletion(string key, long epoch, WorkerJournalAppendReceipt receipt)
+    { Mutations++; inner.FinalizeCompletion(key, epoch, receipt); }
+    public IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long epoch)
+    { Mutations++; return inner.ClaimPreparedCompletions(epoch); }
+    public CommandDrainSnapshot GetDrainSnapshot() => inner.GetDrainSnapshot();
 }
