@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P18-A R7 environment regression coverage
+
+- Exercise the actual Candidate evidence validator through fresh runtime capture, the three module PG requirement union, real preflight/query logic with explicit MOCK psycopg connections, and suite/top-level environment binding rejection. Isolated fixtures retain the selected modules' exact policy entries and floors; no production runner or policy changes.
+- Exercise standalone Ledger setUpClass with complete legacy connections and ordered MOCK preflight/migration/key/authority effects, plus each missing or empty legacy connection failing before all effects. Keep central psycopg and standalone psql seams separate; no real PostgreSQL call is authorized by these tests.
+- Retain candidate C, all R6 environment evidence, the prior CI five legacy-anchor failures and windows floor error, and the old publication caller failure. The external R7 supervisor takes a fresh snapshot at root exit plus EOF; new diagnostic evidence must distinguish its MOCK regression and runtime checks from historical failures. Real PG, cumulative gates, independent QA and formal acceptance remain pending.
+
 ### P18-A Ledger PostgreSQL environment wiring
 
 - Give the central Ledger suite a dedicated migration/admin/runtime connection family plus its append key, epoch and psql input. Preserve standalone legacy fallback only when all dedicated keys are absent; empty dedicated values fail closed. Align both policy/evidence schemas and the shared executor allowlist without changing test floors or public v1 contracts.

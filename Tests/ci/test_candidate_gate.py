@@ -1,4 +1,6 @@
 import copy
+import contextlib
+import shutil
 import base64
 import importlib.util
 import json
@@ -2050,6 +2052,279 @@ class LedgerEnvironmentTests(unittest.TestCase):
         self.assertIn("DPS_TEST_POSTGRES_ADMIN_URI", union)
         self.assertIn("DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL", union)
         self.assertNotIn("DPS_TEST_POSTGRES_MIGRATION_URI", union)
+
+    @contextlib.contextmanager
+    def validator_fixture(self):
+        """MOCK resources; real policy, schema, plans and validator control flow."""
+        modules = ("factory-evidence-ledger", "factory-control-plane-host",
+                   "factory-artifact-builder")
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root = Path(directory)
+            # Copy the selected modules and their exact policy entries, not floors
+            # from unrelated modules. No production policy or discovery is mocked.
+            for module in modules:
+                shutil.copytree(ROOT / "Modules" / module, root / "Modules" / module,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            for path in (SUBJECT.POLICY_SCHEMA_PATH, SUBJECT.EVIDENCE_SCHEMA_PATH):
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / path, root / path)
+            raw_policy = json.loads((ROOT / SUBJECT.POLICY_PATH).read_text(encoding="utf-8"))
+            for key in ("contractSuites", "integrationSuites"):
+                raw_policy[key] = [item for item in raw_policy[key] if item["moduleId"] in modules]
+            (root / SUBJECT.POLICY_PATH).parent.mkdir(parents=True, exist_ok=True)
+            (root / SUBJECT.POLICY_PATH).write_text(json.dumps(raw_policy), encoding="utf-8")
+            policy = SUBJECT.load_candidate_policy(root)
+            inventory = SUBJECT.discover_candidate_inventory(root, "INTEGRATION_VERIFIED", policy)
+            self.assertEqual(set(modules), set(inventory.module_ids))
+            self.assertFalse(inventory.errors)
+            self.assertFalse(inventory.modules_without_contract)
+            self.assertFalse(inventory.modules_without_integration)
+            required = sorted({key for suite in inventory.suites
+                               if suite.evidence_kind == "REAL_POSTGRESQL"
+                               for key in suite.integration_policy.required_environment})
+            real_policy = SUBJECT.load_candidate_policy(ROOT)
+            for suite in inventory.suites:
+                binding = SUBJECT._policy_for_candidate(suite, policy)
+                self.assertEqual(binding, SUBJECT._policy_for_candidate(suite, real_policy))
+            environment = self.environment()
+            environment.update({key: "postgresql://mock:fixture-only@localhost/" + str(i)
+                                for i, key in enumerate(required)
+                                if key in SUBJECT.POSTGRES_CONNECTION_ENVIRONMENT})
+            environment["DPS_PSQL"] = "/usr/bin/true"
+            # Complete Host legacy inputs must not fill a Ledger hole.
+            environment[self.LEGACY[0]] = "postgresql://mock:fixture-only@localhost/legacy"
+            head, digest, now = "b" * 40, "c" * 64, "2026-09-15T00:00:00+00:00"
+            receipt_id = "instruction:" + "1" * 32
+            records = []
+            for candidate in inventory.suites:
+                _, target, target_sha, tree_sha, argv_sha = SUBJECT.validate_candidate_plan(
+                    root, candidate, SUBJECT.parse_candidate_suite(root, candidate), policy)
+                binding = SUBJECT._policy_for_candidate(candidate, policy)
+                keys = binding.required_environment if isinstance(binding, SUBJECT.IntegrationPolicy) else ()
+                records.append(SUBJECT._suite_result(
+                    candidate, head, True, receipt_id, now, now, "FAIL", 1, 0,
+                    binding.minimum_executed_tests, argv_sha, target, target_sha, tree_sha,
+                    [key for key in keys if environment.get(key)], "MOCK_UNEXECUTED", "MOCK_UNEXECUTED"))
+            def bound(path, order=0):
+                return {"path": path, "order": order, "source_state": "tracked",
+                        "git_blob": head, "sha256": digest}
+            receipt = {
+                "schema_version": "dps.instruction-receipt/v1", "contract_id": "instruction.receipt/v1",
+                "producer_module": "factory-instruction-resolver", "soul_id": None,
+                "device_binding_id": None, "platform_account_id": None,
+                "trace_id": "trace_" + "1" * 32, "idempotency_key": "idem_" + "1" * 64,
+                "occurred_at": now, "privacy_class": "internal", "receipt_id": receipt_id,
+                "intent_id": "mock-intent", "auth_context_id": "mock-auth",
+                "agent_identity": "mock-reviewer", "agent_role": "module-implementer",
+                "baseline_commit": head, "resolved_at": now, "scope": list(inventory.module_ids),
+                "instructions": [bound("AGENTS.md"), bound("mock-instruction", 1)],
+                "manifests": [bound("mock-manifest")], "contracts": [],
+                "governance": [bound("mock-governance-" + str(i), i) for i in range(3)],
+                "tests": [bound(record["test_target"], i) for i, record in enumerate(records)],
+                "operations": [bound("mock-operation")], "diff_fingerprint": digest,
+                "status": "BOUND", "invalidated_reason": None,
+            }
+            workspace = {key + "_" + stage: value
+                         for stage in ("start", "end", "post_write")
+                         for key, value in (("clean", False), ("digest", digest), ("dirty_entry_count", 1))}
+            toolchain = {"python": "3.12.13", "python_executable": sys.executable,
+                         "python_executable_realpath": str(Path(sys.executable).resolve()),
+                         "requirements_ci_sha256": digest, "toolchain_lock_sha256": digest,
+                         "python_packages": {}, "dotnet_sdk": None}
+            anchors = [{"path": "AGENTS.md", "baseline_sha256": digest,
+                        "current_sha256": digest, "matches_baseline": True}]
+            checks = [SUBJECT._check(key, "PASS", "MOCK_RESOURCE", {}, 0) for key in (
+                "workspace-start-boundary", "pinned-candidate-toolchain",
+                "module-governance-prerequisite", "candidate-policy-and-inventory",
+                "candidate-trust-anchor", "phase0-cumulative-prerequisite",
+                "instruction-receipt-start", "postgresql18-preflight",
+                "instruction-receipt-final-staleness", "workspace-end-stability")]
+            payload = {
+                "schema_version": SUBJECT.SCHEMA_VERSION, "gate": SUBJECT.GATE_NAME,
+                "mode": "WORKSPACE_DIAGNOSTIC_ONLY", "diagnostic_requested": True,
+                "requested_verification_level": "INTEGRATION_VERIFIED",
+                "candidate_verification_level": None, "verification_level": None,
+                "signed": False, "formal_evidence_eligible": False, "overall_status": "FAIL",
+                "commit_sha": None, "head_commit_observed": head, "baseline_commit": head,
+                "workspace": workspace, "started_at": now, "finished_at": now,
+                "environment": {**toolchain, "postgres_server_version_num": "180004",
+                                "forwarded_environment_keys": required},
+                "upgrade_intent": {}, "changed_paths": [], "trust_anchors": anchors,
+                "instruction_receipt": receipt, "phase0_prerequisite": {},
+                "inventory": SUBJECT._inventory_payload(inventory, policy),
+                "checks": checks, "suites": records, "formal_test_evidence": [],
+                # An exact late rejection proves traversal without issuing MOCK PASS evidence.
+                "summary": dict.fromkeys(("required", "pass", "fail", "infra_error", "other_non_pass"), 0),
+                "limitations": ["MOCK_ONLY: no suite or PostgreSQL server executed"],
+            }
+            # Explicit unrelated resource seams. Both schemas are still validated.
+            loader = SUBJECT._load_json_object
+            def load_resource(path, label):
+                if path == root / SUBJECT.FACTORY_RECEIPT_SCHEMA_PATH:
+                    path = ROOT / SUBJECT.FACTORY_RECEIPT_SCHEMA_PATH
+                return loader(path, label)
+            stack.enter_context(mock.patch.object(SUBJECT, "_load_json_object", side_effect=load_resource))
+            resource_mocks = {
+                "_candidate_git_output": head, "_load_factory_resolver": SimpleNamespace(),
+                "_changed_path_inventory": ([], []), "_validate_upgrade_intent_binding": None,
+                "_resolve_factory_receipt": receipt, "_trust_anchor_inventory": (anchors, True),
+                "_workspace_snapshot": {"head": head, "digest": digest, "clean": False, "dirty_entry_count": 1},
+                "_phase0_payload_valid": True, "_toolchain_check": (toolchain, {"status": "PASS"}),
+                "validate_governance": None,
+            }
+            for name, value in resource_mocks.items():
+                stack.enter_context(mock.patch.object(SUBJECT, name, return_value=value))
+            # Central PG seam only: actual preflight and query functions execute.
+            cursors = []
+            versions = {environment[key]: ("170006" if key in SUBJECT.POSTGRES_NEGATIVE_VERSION_ENVIRONMENT
+                                           else "180004")
+                        for key in required if key in SUBJECT.POSTGRES_CONNECTION_ENVIRONMENT}
+            def connect(uri, **kwargs):
+                self.assertEqual({"autocommit": True, "connect_timeout": 5,
+                                  "options": "-c statement_timeout=5000"}, kwargs)
+                cursor = mock.MagicMock()
+                cursor.fetchone.return_value = (versions[uri],)
+                connection = mock.MagicMock()
+                connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+                cursors.append(cursor)
+                return connection
+            connection_mock = stack.enter_context(mock.patch.object(
+                SUBJECT._LOCKED_DEPENDENCIES["psycopg"], "connect", side_effect=connect))
+            preflight = stack.enter_context(mock.patch.object(
+                SUBJECT, "postgres_preflight", wraps=SUBJECT.postgres_preflight))
+            yield SimpleNamespace(root=root, payload=payload, environment=environment,
+                                  required=required, connect=connection_mock,
+                                  preflight=preflight, cursors=cursors, versions=versions)
+
+    def assert_validator_rejection(self, fixture, environment, message, payload=None):
+        payload = copy.deepcopy(fixture.payload if payload is None else payload)
+        payload.pop("evidence_sha256", None)
+        payload["evidence_sha256"] = SUBJECT.sha256_text(SUBJECT.stable_json(payload))
+        with mock.patch.dict(SUBJECT.os.environ, environment, clear=True):
+            with self.assertRaises(SUBJECT.Phase0Error) as caught:
+                SUBJECT.validate_candidate_evidence(payload, fixture.root)
+        self.assertEqual(message, str(caught.exception))
+        call = fixture.preflight.call_args
+        self.assertEqual(fixture.root, call.args[0])
+        self.assertEqual(fixture.required, call.args[2])
+        return call.args[1]
+
+    def test_validator_recomputes_three_module_environment_and_real_driver_probes(self):
+        with self.validator_fixture() as fixture:
+            captured = self.assert_validator_rejection(
+                fixture, fixture.environment, "candidate summary/overall status is not recomputable")
+            for key in fixture.required:
+                self.assertEqual(fixture.environment[key], captured[key])
+            self.assertCountEqual(fixture.versions, [call.args[0] for call in fixture.connect.call_args_list])
+            for cursor in fixture.cursors:
+                cursor.execute.assert_called_once_with("SHOW server_version_num")
+                cursor.fetchone.assert_called_once_with()
+            self.assertEqual(1, fixture.preflight.call_count)
+
+    def test_validator_recaptures_missing_and_empty_ledger_inputs_before_connect(self):
+        with self.validator_fixture() as fixture:
+            fixture.connect.side_effect = AssertionError("unexpected central PG connect")
+            for key in self.CONNECTIONS:
+                for value in (None, ""):
+                    environment = dict(fixture.environment)
+                    if value is None:
+                        environment.pop(key)
+                    else:
+                        environment[key] = value
+                    # Claimed success must be recomputed to a non-PASS preflight.
+                    payload = copy.deepcopy(fixture.payload)
+                    payload["environment"]["postgres_server_version_num"] = None
+                    with self.subTest(key=key, value=value):
+                        captured = self.assert_validator_rejection(
+                            fixture, environment,
+                            "candidate check status is not recomputable: postgresql18-preflight", payload)
+                        self.assertEqual(value is not None, key in captured)
+                        if value is not None:
+                            self.assertEqual("", captured[key])
+                        fixture.connect.assert_not_called()
+            self.assertEqual(6, fixture.preflight.call_count)
+
+    def test_validator_rejects_each_module_suite_forwarding_tamper(self):
+        with self.validator_fixture() as fixture:
+            for module in ("factory-evidence-ledger", "factory-control-plane-host", "factory-artifact-builder"):
+                for mutation in ("missing", "extra"):
+                    payload = copy.deepcopy(fixture.payload)
+                    record = next(record for record in payload["suites"]
+                                  if record["module_id"] == module and record["evidence_kind"] == "REAL_POSTGRESQL")
+                    keys = record["forwarded_environment_keys"]
+                    if mutation == "missing":
+                        keys.pop()
+                    else:
+                        keys.append(next(key for key in fixture.required if key not in keys))
+                        keys.sort()
+                    with self.subTest(module=module, mutation=mutation):
+                        self.assert_validator_rejection(
+                            fixture, fixture.environment, "candidate suite environment binding is incorrect", payload)
+
+    def test_validator_rejects_top_level_forwarding_union_tamper(self):
+        with self.validator_fixture() as fixture:
+            for mutation in ("missing", "extra"):
+                payload = copy.deepcopy(fixture.payload)
+                keys = payload["environment"]["forwarded_environment_keys"]
+                if mutation == "missing":
+                    keys.pop()
+                else:
+                    keys.append("DPS_TEST_PLATFORM_AUTHORITY_PKCS8_FILE")
+                    keys.sort()
+                with self.subTest(mutation=mutation):
+                    self.assert_validator_rejection(
+                        fixture, fixture.environment,
+                        "candidate top-level forwarded environment does not equal suite union", payload)
+
+    def test_standalone_complete_legacy_setup_reaches_ordered_mock_effects(self):
+        environment = self.environment()
+        for key in self.CONNECTIONS:
+            environment.pop(key)
+        environment.update({key: "legacy-uri-" + str(i) for i, key in enumerate(self.LEGACY)})
+        module = self.load_pg(environment)
+        cls = module.PostgreSQL18IntegrationTests
+        events = []
+        rows = iter(self.rows())
+        def query(uri, *args):
+            events.append(("preflight", uri))
+            return SimpleNamespace(stdout=json.dumps(next(rows)))
+        with mock.patch.dict(SUBJECT.os.environ, environment, clear=True), \
+             mock.patch.object(cls, "_psql", side_effect=query), \
+             mock.patch.object(cls, "_apply_migrations", side_effect=lambda: events.append("migrations")), \
+             mock.patch.object(cls, "_install_auth_key", side_effect=lambda: events.append("key")), \
+             mock.patch.object(module.ExternalAppendAuthority, "from_environment",
+                               side_effect=lambda: events.append("authority") or "MOCK_AUTHORITY"), \
+             mock.patch.object(module.psycopg, "connect") as connect:
+            cls.setUpClass()
+            connect.assert_not_called()
+        self.assertEqual([("preflight", environment[key]) for key in self.LEGACY]
+                         + ["migrations", "key", "authority"], events)
+        self.assertEqual(set(self.LEGACY), set(cls.preflight_identities))
+        self.assertEqual("MOCK_AUTHORITY", cls.authority)
+
+    def test_standalone_incomplete_legacy_setup_fails_before_all_effects(self):
+        for key in self.LEGACY:
+            for value in (None, ""):
+                environment = self.environment()
+                for name in self.CONNECTIONS:
+                    environment.pop(name)
+                environment.update({name: "legacy-uri-" + str(i) for i, name in enumerate(self.LEGACY)})
+                if value is None:
+                    environment.pop(key)
+                else:
+                    environment[key] = value
+                module = self.load_pg(environment)
+                cls = module.PostgreSQL18IntegrationTests
+                with self.subTest(key=key, value=value), contextlib.ExitStack() as stack:
+                    effects = [stack.enter_context(mock.patch.object(owner, name))
+                               for owner, name in (
+                                   (cls, "_preflight_connections"), (cls, "_apply_migrations"),
+                                   (cls, "_install_auth_key"), (module.psycopg, "connect"),
+                                   (module.ExternalAppendAuthority, "from_environment"))]
+                    with self.assertRaises(RuntimeError):
+                        cls.setUpClass()
+                    for effect in effects:
+                        effect.assert_not_called()
 
 
 if __name__ == "__main__":
