@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P18-A Ledger PostgreSQL environment wiring
+
+- Give the central Ledger suite a dedicated migration/admin/runtime connection family plus its append key, epoch and psql input. Preserve standalone legacy fallback only when all dedicated keys are absent; empty dedicated values fail closed. Align both policy/evidence schemas and the shared executor allowlist without changing test floors or public v1 contracts.
+- Validate inputs before database calls and read all three PostgreSQL 18.4 target/role identities before migrations or key installation. Add no-PG regressions for family selection, missing/invalid inputs, schema connection classification, actual clean-child forwarding, redaction and native failure status. Preserve SQL/ACL sources, Host/Artifact families, P17 signing and Candidate admission/trust guards.
+- Local Builder execution: all eight Ledger/Host/Artifact no-PG suites pass with 153 methods. Full CI attempts 244 methods, including 12 passing additions, but remains FAIL with five missing external legacy-anchor failures and one existing windows-edge-worker policy/Manifest floor error (contract 9/10, simulation 45/47). Do not lower floors or invent the external anchor. Real PG and cumulative central gates remain NOT_RUN; required verification and independent QA remain PARTIAL/pending. Full native logs and environment evidence accompany the frozen candidate.
+
 ### P17A-R3 workspace enumeration correction
 
 - Fix the sealed P17A-QA-F01 finding with explicit no-follow directory enumeration and failure on directory open, iteration, classification or identity errors. Preserve the complete non-Git file set, global digest ordering and all existing Runner signing/currentness/lifecycle boundaries.

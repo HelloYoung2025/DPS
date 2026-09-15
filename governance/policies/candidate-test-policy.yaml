@@ -425,7 +425,11 @@
       "testCategory": "Integration",
       "minimumExecutedTests": 2,
       "requiredEnvironment": [
-        "DPS_TEST_POSTGRES_URI",
+        "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+        "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+        "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+        "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64",
+        "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH",
         "DPS_PSQL"
       ]
     },

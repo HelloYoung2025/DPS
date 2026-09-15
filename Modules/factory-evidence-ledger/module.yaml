@@ -184,7 +184,7 @@
         "type": "integration",
         "required": true,
         "command": "PYTHONPATH=Modules/factory-evidence-ledger/src python3.12 -m unittest Modules/factory-evidence-ledger/tests/test_postgres_integration.py",
-        "environment": "real PostgreSQL 18 via distinct DPS_TEST_POSTGRES_MIGRATION_URI DPS_TEST_POSTGRES_ADMIN_URI and DPS_TEST_POSTGRES_RUNTIME_URI identities, fixed external append key and epoch, psql, and locked psycopg; protected functions exact ACL append-only truncate and head consistency; any missing input is INFRA_ERROR",
+        "environment": "real PostgreSQL 18.4 via atomic DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI family, external append key and epoch, explicit central DPS_PSQL and locked psycopg; standalone legacy family only when all dedicated keys are absent; validate inputs and all three server identities before migration/key writes; required setup errors exit nonzero and preserve native runner status",
         "evidenceLevel": "INTEGRATION_VERIFIED"
       }
     ]

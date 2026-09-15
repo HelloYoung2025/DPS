@@ -18,6 +18,7 @@ if __name__ == "__main__" and sys.path:
     del sys.path[0]
 
 import argparse
+import base64
 import importlib
 import datetime as dt
 import hashlib
@@ -219,6 +220,11 @@ CANDIDATE_TRUST_PATHS = (
 )
 DEFAULT_CANDIDATE_RUNS_ROOT = Path("Reports/ci/candidate-runs")
 ALLOWED_RUNTIME_ENVIRONMENT = (
+    "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+    "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64",
+    "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH",
     "DPS_ARTIFACT_BUILDER_ADMIN_DATABASE_URL",
     "DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL",
     "DPS_TEST_POSTGRES",
@@ -230,6 +236,9 @@ ALLOWED_RUNTIME_ENVIRONMENT = (
     "DPS_PSQL",
 )
 POSTGRES_CONNECTION_ENVIRONMENT = (
+    "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
     "DPS_ARTIFACT_BUILDER_ADMIN_DATABASE_URL",
     "DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL",
     "DPS_TEST_POSTGRES",
@@ -997,6 +1006,11 @@ def _parse_libpq_dsn(value: str) -> Dict[str, str]:
     return result
 
 
+def _runtime_environment() -> Dict[str, str]:
+    # Presence is significant: an empty dedicated key must not disappear.
+    return {key: os.environ[key] for key in ALLOWED_RUNTIME_ENVIRONMENT if key in os.environ}
+
+
 def postgres_preflight(
     root: Path,
     runtime_environment: Mapping[str, str],
@@ -1008,6 +1022,13 @@ def postgres_preflight(
     if "DPS_TEST_POSTGRES" in required_connections:
         required_connections.add("DPS_TEST_POSTGRES_URI")
     required_preflight_environment = set(required_connections)
+    required_preflight_environment.update(
+        key for key in required_environment
+        if key in {
+            "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64",
+            "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH",
+        }
+    )
     if "DPS_PSQL" in required_environment:
         required_preflight_environment.add("DPS_PSQL")
     missing = sorted(
@@ -1024,6 +1045,16 @@ def postgres_preflight(
             127,
         )
     try:
+        key_name = "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64"
+        epoch_name = "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH"
+        if key_name in required_preflight_environment or epoch_name in required_preflight_environment:
+            try:
+                key = base64.b64decode(runtime_environment.get(key_name, ""), validate=True)
+                epoch = int(runtime_environment.get(epoch_name, "-1"), 10)
+                if len(key) < 32 or epoch < 0:
+                    raise ValueError("invalid key or epoch")
+            except (ValueError, TypeError) as exc:
+                raise Phase0Error("invalid Ledger append key or revocation epoch") from exc
         if "DPS_PSQL" in required_preflight_environment:
             _safe_repo_or_external_executable(runtime_environment["DPS_PSQL"])
         if "DPS_TEST_POSTGRES" in required_connections:
@@ -1412,6 +1443,22 @@ def _secret_values(runtime_environment: Mapping[str, str]) -> List[Tuple[str, st
                 "client_secret",
             } and value:
                 secrets["{0}:{1}".format(environment_key, key)] = value
+                decoded = urllib.parse.unquote(value)
+                if decoded:
+                    secrets["{0}:{1}:decoded".format(environment_key, key)] = decoded
+    raw_key = runtime_environment.get("DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64")
+    if raw_key:
+        try:
+            decoded_key = base64.b64decode(raw_key, validate=True)
+            if decoded_key:
+                secrets["ledger-key:repr"] = repr(decoded_key)
+                secrets["ledger-key:hex"] = decoded_key.hex()
+                try:
+                    secrets["ledger-key:utf8"] = decoded_key.decode("utf-8")
+                except UnicodeError:
+                    pass
+        except (ValueError, TypeError):
+            pass
     return sorted(secrets.items(), key=lambda item: len(item[1]), reverse=True)
 
 
@@ -2665,11 +2712,7 @@ def validate_candidate_evidence(evidence: Mapping[str, Any], root: Path = ROOT) 
             else "FAIL"
         ),
     }
-    runtime_environment = {
-        key: os.environ[key]
-        for key in ALLOWED_RUNTIME_ENVIRONMENT
-        if os.environ.get(key)
-    }
+    runtime_environment = _runtime_environment()
     postgres_needed = (
         requested_level == "INTEGRATION_VERIFIED"
         and any(value.evidence_kind == "REAL_POSTGRESQL" for value in inventory.suites)
@@ -3049,11 +3092,7 @@ def _run_candidate_gate(
         )
     )
 
-    runtime_environment = {
-        key: os.environ[key]
-        for key in ALLOWED_RUNTIME_ENVIRONMENT
-        if os.environ.get(key)
-    }
+    runtime_environment = _runtime_environment()
     phase0_payload, phase0_check = _phase0_prerequisite(
         ROOT,
         evidence_path,

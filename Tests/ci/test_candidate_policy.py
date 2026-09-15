@@ -147,7 +147,14 @@ EXPECTED_INTEGRATION_TRUST = {
     ),
     "factory-evidence-ledger.postgresql18": (
         "REAL_POSTGRESQL",
-        frozenset({"DPS_PSQL", "DPS_TEST_POSTGRES_URI"}),
+        frozenset({
+            "DPS_PSQL",
+            "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+            "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+            "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+            "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64",
+            "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH",
+        }),
     ),
     "factory-release-controller.simulation": ("SIMULATION", frozenset()),
     "factory-worktree-manager.git-worktree": (

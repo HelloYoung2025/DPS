@@ -1,4 +1,5 @@
 import copy
+import base64
 import importlib.util
 import json
 import hashlib
@@ -772,6 +773,9 @@ if after != before:
             "DPS_TEST_POSTGRES_RUNTIME_URI": "postgresql://runtime:x@127.0.0.1:5432/dps",
             "DPS_TEST_POSTGRES_WRONG_VERSION_URI": "postgresql://negative:x@127.0.0.1:5433/dps",
         }
+        runtime.update({key: "postgresql://ledger:x@127.0.0.1:5432/ledger"
+                        for key in SUBJECT.POSTGRES_CONNECTION_ENVIRONMENT
+                        if key.startswith("DPS_FACTORY_EVIDENCE_")})
         required = tuple(SUBJECT.POSTGRES_CONNECTION_ENVIRONMENT) + (
             "DPS_TEST_PLATFORM_AUTHORITY_PKCS8_FILE",
             "DPS_PSQL",
@@ -783,23 +787,16 @@ if after != before:
         ) as executable, mock.patch.object(
             SUBJECT,
             "_query_postgres_server_version",
-            side_effect=[
-                "180004",
-                "180004",
-                "180004",
-                "180004",
-                "180004",
-                "170009",
-            ],
+            side_effect=lambda uri: "170009" if "negative:" in uri else "180004",
         ) as query:
             version, check = SUBJECT.postgres_preflight(ROOT, runtime, required)
 
         self.assertEqual("180004", version)
         self.assertEqual("PASS", check["status"])
-        self.assertEqual(6, check["details"]["connection_target_count"])
+        self.assertEqual(9, check["details"]["connection_target_count"])
         self.assertEqual(1, check["details"]["negative_control_count"])
         executable.assert_called_once_with("/trusted/psql")
-        self.assertEqual(6, query.call_count)
+        self.assertEqual(9, query.call_count)
 
     def test_postgres_preflight_rejects_wrong_version_control_on_180004(self):
         runtime = {
@@ -1845,6 +1842,214 @@ if after != before:
                     False,
                     30,
                 )
+
+
+
+class LedgerEnvironmentTests(unittest.TestCase):
+    CONNECTIONS = (
+        "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+        "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+        "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+    )
+    LEGACY = (
+        "DPS_TEST_POSTGRES_MIGRATION_URI",
+        "DPS_TEST_POSTGRES_ADMIN_URI",
+        "DPS_TEST_POSTGRES_RUNTIME_URI",
+    )
+    KEY = "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64"
+    EPOCH = "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH"
+
+    def environment(self):
+        return {
+            **{key: "postgresql://role:synthetic@127.0.0.1:5432/ledger"
+               for key in self.CONNECTIONS},
+            self.KEY: base64.b64encode(b"test-only-ledger-key-material-0000").decode(),
+            self.EPOCH: "1", "DPS_PSQL": "/synthetic/psql",
+        }
+
+    def load_pg(self, environment):
+        path = ROOT / "Modules/factory-evidence-ledger/tests/test_postgres_integration.py"
+        spec = importlib.util.spec_from_file_location("_p18_ledger_pg_fixture", path)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(SUBJECT.os.environ, environment, clear=True):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_atomic_family_selection_all_presence_and_empty_values(self):
+        for mask in range(8):
+            for legacy_present in (False, True):
+                environment = self.environment()
+                for key in self.CONNECTIONS:
+                    environment.pop(key)
+                if legacy_present:
+                    environment.update({key: "legacy-" + str(i) for i, key in enumerate(self.LEGACY)})
+                environment.update({key: "dedicated-" + str(i) for i, key in enumerate(self.CONNECTIONS) if mask & (1 << i)})
+                with self.subTest(mask=mask, legacy=legacy_present):
+                    module = self.load_pg(environment)
+                    names = self.CONNECTIONS if mask else self.LEGACY
+                    self.assertEqual(names, module.CONNECTION_NAMES)
+                    self.assertEqual(tuple(environment.get(key) for key in names),
+                                     (module.MIGRATION_URI, module.ADMIN_URI, module.RUNTIME_URI))
+        for key in self.CONNECTIONS:
+            environment = self.environment()
+            environment.update(dict.fromkeys(self.LEGACY, "legacy-complete"))
+            environment[key] = ""
+            module = self.load_pg(environment)
+            self.assertEqual(self.CONNECTIONS, module.CONNECTION_NAMES)
+            with mock.patch.object(module.PostgreSQL18IntegrationTests, "_preflight_connections") as probe, \
+                 mock.patch.object(module.PostgreSQL18IntegrationTests, "_apply_migrations") as migrate, \
+                 mock.patch.object(module.PostgreSQL18IntegrationTests, "_install_auth_key") as install:
+                with self.assertRaises(RuntimeError):
+                    module.PostgreSQL18IntegrationTests.setUpClass()
+                probe.assert_not_called()
+                migrate.assert_not_called()
+                install.assert_not_called()
+
+    def test_missing_or_invalid_auth_fails_before_database_effect(self):
+        changes = [(self.KEY, None), (self.KEY, "!"), (self.KEY, "eA=="),
+                   (self.EPOCH, None), (self.EPOCH, "-1"), (self.EPOCH, "bad"),
+                   ("DPS_PSQL", "")]
+        for key, value in changes:
+            environment = self.environment()
+            if value is None:
+                environment.pop(key)
+            else:
+                environment[key] = value
+            with self.subTest(key=key, value=value), mock.patch("shutil.which", return_value=None):
+                module = self.load_pg(environment)
+                with mock.patch.object(module.PostgreSQL18IntegrationTests, "_preflight_connections") as probe, \
+                     mock.patch.object(module.PostgreSQL18IntegrationTests, "_apply_migrations") as migrate, \
+                     mock.patch.object(module.PostgreSQL18IntegrationTests, "_install_auth_key") as install, \
+                     mock.patch.object(module.psycopg, "connect") as connect:
+                    with self.assertRaises(RuntimeError):
+                        module.PostgreSQL18IntegrationTests.setUpClass()
+                    for operation in (probe, migrate, install, connect):
+                        operation.assert_not_called()
+
+    def rows(self):
+        return [{"version": "180004", "database": "ledger", "address": "127.0.0.1",
+                 "port": 5432, "current_user": role, "session_user": role}
+                for role in ("test_migrator", "dps_factory_evidence_admin",
+                             "dps_factory_evidence_runtime")]
+
+    def test_read_only_precheck_binds_three_versions_targets_and_roles(self):
+        module = self.load_pg(self.environment())
+        rows = self.rows()
+        with mock.patch.object(module.PostgreSQL18IntegrationTests, "_psql",
+                               side_effect=[SimpleNamespace(stdout=json.dumps(row)) for row in rows]) as query:
+            module.PostgreSQL18IntegrationTests._preflight_connections()
+        self.assertEqual(3, query.call_count)
+        self.assertEqual(set(self.CONNECTIONS),
+                         set(module.PostgreSQL18IntegrationTests.preflight_identities))
+        for call in query.call_args_list:
+            self.assertEqual("-Atc", call.args[1])
+            self.assertIn("current_setting('server_version_num')", call.args[2])
+
+    def test_wrong_version_or_identity_cannot_reach_migration_or_key_install(self):
+        for index in range(3):
+            for field, value in (("version", "180003"), ("database", "other"),
+                                 ("address", None), ("current_user", "")):
+                module = self.load_pg(self.environment())
+                rows = self.rows()
+                rows[index][field] = value
+                with self.subTest(index=index, field=field), \
+                     mock.patch.object(module.PostgreSQL18IntegrationTests, "_psql",
+                                       side_effect=[SimpleNamespace(stdout=json.dumps(row)) for row in rows]), \
+                     mock.patch.object(module.PostgreSQL18IntegrationTests, "_apply_migrations") as migrate, \
+                     mock.patch.object(module.PostgreSQL18IntegrationTests, "_install_auth_key") as install:
+                    with self.assertRaises(RuntimeError):
+                        module.PostgreSQL18IntegrationTests.setUpClass()
+                    migrate.assert_not_called()
+                    install.assert_not_called()
+
+    def test_runtime_capture_preserves_empty_dedicated_presence(self):
+        values = {**dict.fromkeys(self.LEGACY, "legacy"), self.CONNECTIONS[0]: ""}
+        with mock.patch.dict(SUBJECT.os.environ, values, clear=True):
+            captured = SUBJECT._runtime_environment()
+        self.assertIn(self.CONNECTIONS[0], captured)
+        self.assertEqual("", captured[self.CONNECTIONS[0]])
+        self.assertNotIn(self.LEGACY[0], captured)
+
+    def test_central_missing_inputs_never_probe_and_complete_inputs_probe_all_three(self):
+        environment = self.environment()
+        required = (*self.CONNECTIONS, self.KEY, self.EPOCH, "DPS_PSQL")
+        for key in required:
+            for value in (None, ""):
+                broken = dict(environment)
+                if value is None:
+                    broken.pop(key)
+                else:
+                    broken[key] = value
+                with self.subTest(key=key, value=value), \
+                     mock.patch.object(SUBJECT, "_query_postgres_server_version") as query:
+                    version, check = SUBJECT.postgres_preflight(ROOT, broken, required)
+                    self.assertIsNone(version)
+                    self.assertEqual("INFRA_ERROR", check["status"])
+                    query.assert_not_called()
+        with mock.patch.object(SUBJECT, "_safe_repo_or_external_executable"), \
+             mock.patch.object(SUBJECT, "_query_postgres_server_version", return_value="180004") as query:
+            version, check = SUBJECT.postgres_preflight(ROOT, environment, required)
+        self.assertEqual("180004", version)
+        self.assertEqual("PASS", check["status"])
+        self.assertEqual(3, query.call_count)
+
+    def test_central_invalid_auth_never_queries_postgres(self):
+        for key, value in ((self.KEY, "!"), (self.KEY, "eA=="), (self.EPOCH, "-1")):
+            environment = self.environment()
+            environment[key] = value
+            with mock.patch.object(SUBJECT, "_query_postgres_server_version") as query:
+                version, check = SUBJECT.postgres_preflight(ROOT, environment, tuple(environment))
+            self.assertIsNone(version)
+            self.assertEqual("INFRA_ERROR", check["status"])
+            query.assert_not_called()
+
+    def test_dedicated_secrets_and_key_representations_are_redacted(self):
+        environment = self.environment()
+        environment[self.CONNECTIONS[0]] = "postgresql://role:encoded%2Bpassword@127.0.0.1/ledger"
+        decoded = base64.b64decode(environment[self.KEY])
+        secrets = [environment[self.CONNECTIONS[0]], "encoded%2Bpassword",
+                   "encoded+password", environment[self.KEY], repr(decoded),
+                   decoded.hex(), decoded.decode()]
+        redacted = SUBJECT._redact_log("\n".join(secrets), environment)
+        for secret in secrets:
+            self.assertNotIn(secret, redacted)
+
+    def test_schema_connection_condition_and_both_evidence_key_sites(self):
+        policy = json.loads((ROOT / SUBJECT.POLICY_PATH).read_text(encoding="utf-8"))
+        schema = json.loads((ROOT / SUBJECT.POLICY_SCHEMA_PATH).read_text(encoding="utf-8"))
+        suite = next(item for item in policy["integrationSuites"]
+                     if item["suiteId"] == "factory-evidence-ledger.postgresql18")
+        item_schema = schema["properties"]["integrationSuites"]["items"]
+        validator = SUBJECT._LOCKED_DEPENDENCIES["jsonschema"].Draft202012Validator(item_schema)
+        validator.validate(suite)
+        for connection in self.CONNECTIONS:
+            validator.validate({**suite, "requiredEnvironment": [connection]})
+        self.assertTrue(list(validator.iter_errors({**suite, "requiredEnvironment": [self.KEY, self.EPOCH]})))
+        for kind in ("SIMULATION", "REAL_LOCAL_PROCESS"):
+            self.assertTrue(list(validator.iter_errors({**suite, "evidenceKind": kind})))
+        evidence = json.loads((ROOT / SUBJECT.EVIDENCE_SCHEMA_PATH).read_text(encoding="utf-8"))
+        for path in (evidence["properties"]["environment"]["properties"],
+                     evidence["$defs"]["suite"]["properties"]):
+            self.assertEqual({"$ref": "#/$defs/environmentKeys"}, path["forwarded_environment_keys"])
+        keys_validator = SUBJECT._LOCKED_DEPENDENCIES["jsonschema"].Draft202012Validator(evidence["$defs"]["environmentKeys"])
+        keys_validator.validate(list(self.environment()))
+        self.assertTrue(list(keys_validator.iter_errors(["NOT_ALLOWED"])))
+        phase0 = sys.modules["run_phase0_gate"]
+        self.assertEqual(set(SUBJECT.ALLOWED_RUNTIME_ENVIRONMENT),
+                         phase0.ALLOWED_TRUSTED_EXECUTOR_ENVIRONMENT - {"PYTHONPATH"})
+
+    def test_required_environment_union_keeps_host_and_artifact_families(self):
+        policy = SUBJECT.load_candidate_policy(ROOT)
+        inventory = SUBJECT.discover_candidate_inventory(ROOT, "INTEGRATION_VERIFIED", policy)
+        selected = [suite for suite in inventory.suites if suite.suite["id"] in (
+            "factory-evidence-ledger.postgresql18", "factory-control-plane-host.postgresql18",
+            "factory-artifact-builder.postgresql18")]
+        self.assertEqual(3, len(selected))
+        union = set().union(*(set(s.integration_policy.required_environment) for s in selected))
+        self.assertTrue(set(self.environment()) <= union)
+        self.assertIn("DPS_TEST_POSTGRES_ADMIN_URI", union)
+        self.assertIn("DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL", union)
+        self.assertNotIn("DPS_TEST_POSTGRES_MIGRATION_URI", union)
 
 
 if __name__ == "__main__":

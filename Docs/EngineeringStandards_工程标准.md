@@ -196,6 +196,25 @@ Hosted CI, mock, simulator, Windows and device evidence must be labelled separat
 
 临时任务计划留在任务或 PR 中；禁止新增代理私有状态目录或替代项目门禁。受治理工具生成的 receipt、原始证据、publication marker 和 quarantine claim 按本节既有规则保存在规定的 Git-ignored evidence root。它们不属于被禁止的私有任务状态，也不能据此新增一套审批机制。
 
+#### Ledger PostgreSQL environment boundary
+
+The central Ledger suite forwards only its dedicated
+`DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI`,
+`DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI`,
+`DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI`, append HMAC key, revocation epoch
+and `DPS_PSQL`. Host retains its generic family; Artifact retains its database
+URLs. Any present dedicated connection key, including an empty string, prevents
+standalone fallback to the complete legacy family. Both schema key inventories
+and the PostgreSQL connection condition must agree with the execution allowlists.
+
+Use the Ledger [operations guide](../Modules/factory-evidence-ledger/operations/README.md)
+for input validation, all-three `180004`/identity readback and authorized SQL
+side effects. A real wrong-version control must differ from `180004`.
+Separate native exit, actual runner status and diagnostic infrastructure reason.
+Preserve ordinary exit-1 `FAIL` even when stderr contains `INFRA_ERROR`.
+No-PG tests of forwarding/preflight do not award a Candidate level or replace
+required real PG, cumulative gates, independent QA or release approval.
+
 ### 5. Observability
 
 每次 command 必须能关联以下链路:

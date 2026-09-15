@@ -51,18 +51,40 @@ is an idempotent no-op; key drift at the same epoch or an older epoch fails.
 
 ## Verification truth
 
-The required PostgreSQL suite needs all of:
+The central PostgreSQL suite requires these six explicit inputs:
 
-- `DPS_TEST_POSTGRES_MIGRATION_URI`
-- `DPS_TEST_POSTGRES_ADMIN_URI`
-- `DPS_TEST_POSTGRES_RUNTIME_URI`
+- `DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI`
+- `DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI`
+- `DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI`
 - `DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64`
 - `DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH`
-- `DPS_PSQL` or `psql` on `PATH`
-- the repository hash-locked `psycopg` driver
+- `DPS_PSQL`
 
-Any missing input is a hard `INFRA_ERROR`; it is never skipped or replaced by
-a mock. The JSONL repository is explicitly development-only evidence for local
+The repository hash-locked psycopg driver is also required. The dedicated
+connection family is atomic: any dedicated key present, including an empty
+value, locks all three dedicated values. Missing or empty values fail; they
+never fall back to Host's generic connections. Standalone invocation retains
+the complete legacy `DPS_TEST_POSTGRES_MIGRATION_URI/ADMIN_URI/RUNTIME_URI`
+family only when all three dedicated keys are absent. Standalone psql PATH
+discovery remains supported; central execution requires explicit `DPS_PSQL`.
+
+Validate the key (strict Base64, at least 32 bytes), nonnegative integer epoch,
+and required inputs before any database call. Then read all three connections'
+version, database, server address/port and current/session identity before
+migration or key installation. Each version must equal `180004`; all targets
+must agree, with the fixed admin/runtime identities. Ambiguous targets fail.
+An authorized real run must separately bind the server/resource ownership and
+exact migrator identity; equal SQL names are not authorization.
+
+The real suite runs both migration files twice, installs the test auth key and
+writes events. Bind those SQL effects, isolated Ledger/Host/Artifact resources,
+a nonproduction key channel and cleanup authority before executing it.
+Local forwarding or simulated preflight tests do not prove real PG execution.
+Missing/setup errors exit nonzero; the shared executor maps ordinary exit 1 to
+`FAIL`, regardless of an `INFRA_ERROR` string in stderr. Unattempted PG is
+`NOT_RUN`; incomplete required checks retain `PARTIAL`, never skip or PASS.
+
+The JSONL repository is explicitly development-only evidence for local
 locking and crash recovery. It rejects symlinks, hard links, non-regular files,
 path replacement while locked, partial or short writes, oversized files,
 duplicate members, tampering, and concurrent sequence races; it is never a
