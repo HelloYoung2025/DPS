@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P17A-R3 workspace enumeration correction
+
+- Fix the sealed P17A-QA-F01 finding with explicit no-follow directory enumeration and failure on directory open, iteration, classification or identity errors. Preserve the complete non-Git file set, global digest ordering and all existing Runner signing/currentness/lifecycle boundaries.
+- Add real pre/post permission regressions, enumeration I/O error branches and an independent digest-ordering check in the existing Runner test file. The same real pre-execution test fails on the old implementation after a persistent file mutation and issuer call, and passes after the fix with zero controlled test processes and zero issuer calls. Restore permissions and retain bounded cleanup records.
+- Preserve the original candidate and BLOCKED QA report. The R3 correction remains local diagnostic work pending a new frozen candidate and fresh independent QA; it does not grant acceptance, integration, central gate or production authority.
+
 ### P17A Runner post-execution binding
 
 - Freeze Runner request/plan/receipt/lease/policy inputs and recheck current facts, exact HEAD, complete workspace and Manifest before issuance. Read Manifest bytes once per validation with file/parent identity checks; reject expiry equality, revoked facts and protected-input drift with zero issuer calls.

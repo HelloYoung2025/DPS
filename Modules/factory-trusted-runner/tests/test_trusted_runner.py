@@ -306,6 +306,156 @@ class TrustedRunnerTests(unittest.TestCase):
                 if target == "untracked-input.txt":
                     (self.fx.root / target).unlink(missing_ok=True)
 
+    def test_workspace_unlistable_known_file_rejects_issuance(self):
+        self.assertNotEqual(0, os.geteuid(), "the permission fixture requires an ordinary user")
+        directory = self.fx.root / "search-only"
+        directory.mkdir(mode=0o700)
+        target = directory / "known.txt"
+        target.write_text("before", encoding="utf-8")
+        target.chmod(0o600)
+        self.fx.test_file.write_text(
+            "import pathlib, unittest\nclass T(unittest.TestCase):\n"
+            "    def test_write(self): pathlib.Path('search-only/known.txt').write_text('changed', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        original_mode = os.fstat(descriptor).st_mode & 0o7777
+        try:
+            os.fchmod(descriptor, 0o100)
+            with self.assertRaises(PermissionError):
+                with os.scandir(directory) as entries:
+                    list(entries)
+            with target.open("r+", encoding="utf-8") as stream:
+                self.assertEqual("before", stream.read())
+                stream.seek(0)
+                stream.write("before")
+            with mock.patch.object(self.fx.runner, "attestation_issuer", wraps=self.fx.runner.attestation_issuer) as issuer:
+                error = None
+                try:
+                    self.fx.run()
+                except TrustedRunnerError as exc:
+                    error = exc
+                finally:
+                    print("P17A_PERMISSION_CASE " + json.dumps({
+                        "phase": "pre", "enumeration_denied": True,
+                        "known_file_after": target.read_text(encoding="utf-8"),
+                        "issuer_calls": issuer.call_count, "run_rejected": error is not None,
+                        "controlled_processes": len(self.fx.processes),
+                    }, sort_keys=True), flush=True)
+                self.assertIsNotNone(error, "incomplete workspace enumeration reached the issuer")
+                issuer.assert_not_called()
+                self.assertEqual("before", target.read_text(encoding="utf-8"))
+                self.assertEqual({}, self.fx.processes)
+        finally:
+            try:
+                os.fchmod(descriptor, original_mode)
+                self.assertEqual(original_mode, os.fstat(descriptor).st_mode & 0o7777)
+                print("P17A_PERMISSION_RESTORED " + json.dumps({"path": str(directory), "mode": original_mode}), flush=True)
+            finally:
+                os.close(descriptor)
+
+    def test_workspace_postcheck_unlistable_directory_has_no_issuer(self):
+        self.assertNotEqual(0, os.geteuid(), "the permission fixture requires an ordinary user")
+        directory = self.fx.root / "post-search-only"
+        directory.mkdir(mode=0o700)
+        target = directory / "known.txt"
+        target.write_text("before", encoding="utf-8")
+        target.chmod(0o600)
+        self.fx.test_file.write_text(
+            "import os, pathlib, unittest\nclass T(unittest.TestCase):\n"
+            "    def test_write(self):\n"
+            "        pathlib.Path('post-search-only/known.txt').write_text('changed', encoding='utf-8')\n"
+            "        os.chmod('post-search-only', 0o100)\n",
+            encoding="utf-8",
+        )
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        original_mode = os.fstat(descriptor).st_mode & 0o7777
+        try:
+            with mock.patch.object(self.fx.runner, "attestation_issuer") as issuer:
+                with self.assertRaisesRegex(TrustedRunnerError, "workspace cannot be enumerated safely"):
+                    self.fx.run()
+                issuer.assert_not_called()
+                self.assertEqual(1, len(self.fx.processes))
+                with self.assertRaises(PermissionError):
+                    with os.scandir(directory) as entries:
+                        list(entries)
+                self.assertEqual("changed", target.read_text(encoding="utf-8"))
+                print("P17A_PERMISSION_CASE " + json.dumps({
+                    "phase": "post", "enumeration_denied": True,
+                    "known_file_after": "changed", "issuer_calls": issuer.call_count,
+                    "run_rejected": True, "controlled_processes": len(self.fx.processes),
+                }, sort_keys=True), flush=True)
+        finally:
+            try:
+                os.fchmod(descriptor, original_mode)
+                self.assertEqual(original_mode, os.fstat(descriptor).st_mode & 0o7777)
+                print("P17A_PERMISSION_RESTORED " + json.dumps({"path": str(directory), "mode": original_mode}), flush=True)
+            finally:
+                os.close(descriptor)
+
+    def test_workspace_enumeration_errors_fail_closed_before_and_after_execution(self):
+        scandir, read_stat = os.scandir, os.stat
+        for phase in ("pre", "post"):
+            for fault in ("open", "iteration", "stat"):
+                active, observed = [phase == "pre"], []
+
+                def scan(path):
+                    if active[0] and isinstance(path, int) and fault == "open":
+                        observed.append(fault)
+                        raise OSError("synthetic enumeration open failure")
+
+                    @contextlib.contextmanager
+                    def opened():
+                        with scandir(path) as entries:
+                            if active[0] and isinstance(path, int) and fault == "iteration":
+                                def interrupted():
+                                    yield next(entries)
+                                    observed.append(fault)
+                                    raise OSError("synthetic enumeration iteration failure")
+                                yield interrupted()
+                            else:
+                                yield entries
+                    return opened()
+
+                def classify(path, *args, **kwargs):
+                    if active[0] and fault == "stat" and path == "Modules" and kwargs.get("dir_fd") is not None:
+                        observed.append(fault)
+                        raise OSError("synthetic enumeration stat failure")
+                    return read_stat(path, *args, **kwargs)
+
+                before = len(self.fx.processes)
+                boundary = self._after_execution(lambda: active.__setitem__(0, True)) if phase == "post" else contextlib.nullcontext()
+                with self.subTest(phase=phase, fault=fault), boundary, mock.patch.object(os, "scandir", side_effect=scan), mock.patch.object(os, "stat", side_effect=classify), mock.patch.object(self.fx.runner, "attestation_issuer") as issuer:
+                    with self.assertRaisesRegex(TrustedRunnerError, "workspace cannot be enumerated safely"):
+                        self.fx.run()
+                    issuer.assert_not_called()
+                    self.assertEqual([fault], observed)
+                    self.assertEqual(before + (phase == "post"), len(self.fx.processes))
+                    print("P17A_ENUMERATION_FAULT " + json.dumps({
+                        "phase": phase, "fault": fault, "issuer_calls": issuer.call_count,
+                        "controlled_processes": len(self.fx.processes) - before,
+                    }, sort_keys=True), flush=True)
+
+    def test_workspace_digest_preserves_global_path_order_and_nested_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contents = {
+                ".hidden": b"hidden", "a.txt": b"first", "a/.hidden": b"nested hidden",
+                "a/nested.txt": b"second", "z/.git/kept.txt": b"nested Git name",
+                ".git/ignored.txt": b"excluded",
+            }
+            for name, content in contents.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            expected = [{"path": name, "sha256": hashlib.sha256(contents[name]).hexdigest()} for name in (
+                ".hidden", "a.txt", "a/.hidden", "a/nested.txt", "z/.git/kept.txt",
+            )]
+            digest = hashlib.sha256(json.dumps(expected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            actual, identities = MODULE._workspace_snapshot(root)
+            self.assertEqual(digest, actual)
+            self.assertEqual({".", ".hidden", "a", "a.txt", "a/.hidden", "a/nested.txt", "z", "z/.git", "z/.git/kept.txt"}, set(identities))
+
     def test_postcheck_rejects_changed_head_and_manifest(self):
         for change in (
             lambda: self.fx._git("-c", "user.name=DPS Test", "-c", "user.email=dps@example.invalid", "commit", "--allow-empty", "-qm", "changed fixture head"),

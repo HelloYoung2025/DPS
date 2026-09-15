@@ -200,28 +200,49 @@ def _read_protected_file(path: Path) -> tuple[bytes, tuple[int, ...]]:
 
 def _workspace_snapshot(root: Path) -> tuple[str, dict[str, tuple[int, ...]]]:
     records: list[dict[str, str]] = []
-    root_stat = root.lstat()
-    if not stat.S_ISDIR(root_stat.st_mode):
-        raise TrustedRunnerError("workspace root identity is unsafe")
-    identities = {".": (root_stat.st_dev, root_stat.st_ino, root_stat.st_mode, root_stat.st_uid)}
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        relative = path.relative_to(root)
-        if relative.parts and relative.parts[0] == ".git":
-            continue
-        if path.is_symlink():
-            raise TrustedRunnerError(f"symlinked workspace path: {relative.as_posix()}")
-        if path.is_file():
-            content, identity = _read_protected_file(path)
-            records.append({
-                "path": relative.as_posix(),
-                "sha256": sha256_bytes(content),
-            })
-            identities[relative.as_posix()] = identity
-        elif path.is_dir():
-            info = path.lstat()
-            identities[relative.as_posix()] = (info.st_dev, info.st_ino, info.st_mode, info.st_uid)
-        else:
-            raise TrustedRunnerError("non-regular workspace input")
+    identities: dict[str, tuple[int, ...]] = {}
+
+    def visit(relative: PurePosixPath, parent: int | None, expected: os.stat_result) -> None:
+        if not stat.S_ISDIR(expected.st_mode):
+            raise TrustedRunnerError("workspace directory identity is unsafe")
+        name = root if parent is None else relative.name
+        directory = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        try:
+            before = os.fstat(directory)
+            if _file_identity(before) != _file_identity(expected):
+                raise TrustedRunnerError("workspace directory changed before enumeration")
+            identities[relative.as_posix()] = _file_identity(before)[:4]
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+            for entry in entries:
+                if relative == PurePosixPath(".") and entry.name == ".git":
+                    continue
+                child = relative / entry.name
+                info = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise TrustedRunnerError(f"symlinked workspace path: {child.as_posix()}")
+                if stat.S_ISDIR(info.st_mode):
+                    visit(child, directory, info)
+                elif stat.S_ISREG(info.st_mode):
+                    content, identity = _read_protected_file(root / child)
+                    if identity != _file_identity(info):
+                        raise TrustedRunnerError("workspace file changed during enumeration")
+                    records.append({"path": child.as_posix(), "sha256": sha256_bytes(content)})
+                    identities[child.as_posix()] = identity
+                else:
+                    raise TrustedRunnerError("non-regular workspace input")
+            after = os.fstat(directory)
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if _file_identity(before) != _file_identity(after) or _file_identity(after) != _file_identity(current):
+                raise TrustedRunnerError("workspace directory changed during enumeration")
+        finally:
+            os.close(directory)
+
+    try:
+        visit(PurePosixPath("."), None, root.lstat())
+    except OSError as exc:
+        raise TrustedRunnerError("workspace cannot be enumerated safely") from exc
+    records.sort(key=lambda item: item["path"])
     return sha256_bytes(canonical_bytes(records)), identities
 
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - P17A-R3 - 2026-09-15
+
+- Fix P17A-QA-F01: replace error-suppressing workspace globbing with explicit directory-descriptor enumeration, no-follow opens and stable identity checks. Reject every enumeration or classification failure instead of returning a partial workspace digest. Preserve global path ordering and the top-level-only Git exclusion.
+- Add four regression methods covering real searchable/unlistable directories before and after execution, six pre/post enumeration-error branches, and independently specified digest ordering with nested Git names. The same real pre-execution case exposes an issuer call and persistent mutation on the old implementation, then rejects before execution after the fix. Restore fixture permissions and retain process cleanup evidence.
+- Preserve all prior currentness, CLI, crypto, failure-diagnostic and lifecycle checks. Keep the old candidate and BLOCKED QA evidence; the correction still needs fresh independent QA and grants no formal gate, integration or production authority.
+
 ## Unreleased - 2026-09-15
 
 - Freeze run inputs and recheck exact workspace, HEAD, Manifest, auth/receipt, plan and lease/fencing after process cleanup and output freeze. Reject changed identities, unsafe reads, expired leases and clock rollback before issuance. Parse and hash each Manifest from the same protected bytes.
