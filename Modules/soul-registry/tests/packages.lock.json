@@ -182,7 +182,7 @@
       "dps.memoryeventledger": {
         "type": "Project",
         "dependencies": {
-          "Dps.MemoryEventLedger.Contracts": "[0.1.0, )",
+          "Dps.MemoryEventLedger.Contracts": "[0.2.0, )",
           "Dps.SoulRegistry.Contracts": "[0.1.0, )",
           "Npgsql": "[10.0.3, )"
         }

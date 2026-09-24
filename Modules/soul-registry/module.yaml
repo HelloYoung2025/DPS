@@ -90,7 +90,20 @@
     "consumed": []
   },
   "communication": {
-    "inbound": [],
+    "inbound": [
+      {
+        "peerModule": "control-plane-host",
+        "contractId": "soul.current.query",
+        "major": 1,
+        "direction": "inbound",
+        "transport": "in-process-api",
+        "timeoutMs": 5000,
+        "retryPolicy": "none-single-shared-deadline",
+        "idempotencyKey": "request_id:nonce:session_id",
+        "authScope": "soul-current.identity-read:exact-tenant-and-soul",
+        "failureMode": "fail-closed-proposed-quarantine-only"
+      }
+    ],
     "outbound": [
       {
         "peerModule": "memory-event-ledger",
@@ -115,6 +128,18 @@
         "idempotencyKey": "trace_id:idempotency_key",
         "authScope": "module:evidence-service",
         "failureMode": "fail-closed-and-record-evidence"
+      },
+      {
+        "peerModule": "control-plane-host",
+        "contractId": "soul.current.resolution",
+        "major": 1,
+        "direction": "outbound",
+        "transport": "in-process-api",
+        "timeoutMs": 5000,
+        "retryPolicy": "none-single-shared-deadline",
+        "idempotencyKey": "request_id:nonce:session_id",
+        "authScope": "soul-current.identity-read:exact-tenant-and-soul",
+        "failureMode": "fail-closed-proposed-quarantine-only"
       }
     ]
   },
@@ -219,7 +244,7 @@
         "type": "contract",
         "required": true,
         "command": "python3.12 -m unittest discover -s Modules/soul-registry/tests -p test_soul_identity_schemas.py",
-        "environment": "locked requirements-ci.txt jsonschema Draft 2020-12 with active format checking; isolated discovery of exactly six provider-owned test methods and all applicable shared corpus cases",
+        "environment": "locked requirements-ci.txt Draft 2020-12 with active format checking; original six methods and owner corpus 411 retained, plus two installation/protocol schema methods and 131 shared composition cases",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
       {
@@ -227,7 +252,7 @@
         "type": "integration",
         "required": true,
         "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Integration --minimum-expected-tests 1 --fail-skips on",
-        "environment": "real isolated PostgreSQL 18.4; synthetic test-owned issuer only; retained Soul-to-Ledger v1 positive path remains required",
+        "environment": "real isolated PostgreSQL 18.4; synthetic test-owned issuer only; retained Soul-to-Ledger v1 positive path remains required; macOS native protection and separate synthetic signer/Host processes exercise real product composition, crypto and distinct SELECT-only PG roles; same UID is not production isolation",
         "evidenceLevel": "INTEGRATION_VERIFIED"
       }
     ]

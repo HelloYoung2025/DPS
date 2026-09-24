@@ -13,6 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Dps.ControlPlaneHost/Dps.ControlPlaneHost.csproj" />
+    <ProjectReference Include="../../../soul-registry/tests/Dps.SoulRegistry.Tests.csproj" />
     <ProjectReference Include="../../contracts/Dps.ControlPlaneHost.Contracts/Dps.ControlPlaneHost.Contracts.csproj" />
     <ProjectReference Include="../../../policy-approval/contracts/provided/Dps.PolicyApproval.Contracts/Dps.PolicyApproval.Contracts.csproj" />
   </ItemGroup>

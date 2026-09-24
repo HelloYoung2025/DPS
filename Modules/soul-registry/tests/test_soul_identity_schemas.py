@@ -104,5 +104,35 @@ class SoulIdentitySchemaTests(unittest.TestCase):
         self.check_family("soul.current.resolution/v1")
 
 
+class SoulCurrentInstallationSchemaTests(unittest.TestCase):
+    def test_current_installation_schema_and_corpus(self):
+        corpus = load(PROVIDED.parent / "corpus" / "soul.current.composition.v1.corpus.json")
+        self.assertEqual(len(corpus["cases"]), 131)
+        self.assertEqual(corpus["inventory"], [case["id"] for case in corpus["cases"]])
+        protocol = load(PROVIDED / "soul.current.signing-protocol.v1.schema.json")
+        for case in corpus["cases"]:
+            family = case["contract_id"]
+            schema = protocol["$defs"]["status"] if family == "soul.current.status/v1" else load(PROVIDED / family.replace("/v1", ".v1.schema.json"))
+            Draft202012Validator.check_schema(schema)
+            self.assertFalse(schema["additionalProperties"])
+            self.assertEqual(set(schema["required"]), set(schema["properties"]))
+            if case["schema_expected"] is not None:
+                with self.subTest(case=case["id"]):
+                    errors = list(Draft202012Validator(schema, format_checker=CHECKER).iter_errors(case["payload"]))
+                    self.assertEqual(not errors, case["schema_expected"], "; ".join(error.message for error in errors))
+
+    def test_signing_protocol_has_exact_request_response_shapes(self):
+        schema = load(PROVIDED / "soul.current.signing-protocol.v1.schema.json")
+        pairs = {(item["properties"]["operation"]["const"], item["properties"]["message_type"]["const"]) for item in schema["oneOf"]}
+        self.assertEqual(pairs, {
+            ("host-possession", "challenge-request"), ("host-possession", "challenge"),
+            ("host-possession", "answer"), ("host-possession", "proof"),
+            ("read-current-status", "request"), ("read-current-status", "response"),
+            ("sign-current", "request"), ("sign-current", "response"), ("error", "response"),
+        })
+        self.assertNotIn("owner_revision", schema["properties"])
+        self.assertNotIn("private_key", schema["properties"])
+
+
 if __name__ == "__main__":
     unittest.main()

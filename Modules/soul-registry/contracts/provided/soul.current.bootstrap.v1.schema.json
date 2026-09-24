@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dps.local/contracts/soul.current.bootstrap.v1.schema.json",
+  "title": "soul.current.bootstrap/v1",
+  "description": "Untrusted installation data only. Native protection, cryptographic verification and fresh owner state are separate required checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "installation_id",
+    "enabled",
+    "root_key_id",
+    "root_spki_base64",
+    "active_configuration_sha256",
+    "active_release_bom_sha256",
+    "active_release_generation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "contract_id": {
+      "const": "soul.current.bootstrap/v1"
+    },
+    "installation_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+      "format": "uuid",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "root_key_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$(?![\\s\\S])"
+    },
+    "root_spki_base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{122}==$(?![\\s\\S])"
+    },
+    "active_configuration_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "active_release_bom_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "active_release_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    }
+  }
+}

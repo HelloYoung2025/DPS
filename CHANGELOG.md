@@ -1397,3 +1397,9 @@ Backups/
 - Recheck the trusted UTC clock and lease before every native attempt and after durable attempt persistence. Reject expiry equality, non-UTC clock values and observed rollback; retain consumed attempt budgets and unfinished drain state when no native call was made.
 - Add the public C# ICommandStateStore.ReadExisting member and adapt all six repository implementations, including the new regression adapter. TryBegin still reserves/claims; no unknown external binary compatibility is asserted. No wire, Journal format, owner contract, Manifest, lock or wrapper changes.
 - Retain 36 ProcessAsync black-box regressions from the frozen original-implementation red run: 18 new Unit assertions and 13 new Integration assertions failed as intended, with original suites and five new controls passing. Candidate build/full-suite results and independent QA are recorded separately in provider-local frozen product receipts. Linux checks do not remove declared-OS gaps or complete P10/P21 production work.
+
+## Proposed P05 closed Soul-current Host read
+
+- Add a closed Host composition API backed by the fixed Soul factory, protected installation/artifact checks, real owner lease, and typed independent possession/current signers. Current signatures are constructed from the signer's own read-only PG snapshot; Host returns Soul active-as-of facts after fresh authority and lease revalidation.
+- Declare only the Proposed Host query/resolution edge and composition-only runtime dependency exception. Keep all identity routes quarantine-only, both modules release-ineligible, and Program/self-check unchanged.
+- Add strict installation/protocol formats and shared corpus, real local process/cryptography/PG and native-protection negatives. Retain original tests, migrations, contracts and P11/global gate failures. Synthetic same-UID tests are not production root/cross-UID isolation, activation, formal verification or complete P05 delivery.

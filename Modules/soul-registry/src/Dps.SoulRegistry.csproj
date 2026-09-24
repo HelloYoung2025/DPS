@@ -13,5 +13,6 @@
     <EmbeddedResource Include="../migrations/002_record_receipt_hash_basis.sql" />
     <EmbeddedResource Include="../migrations/003_add_identity_authority_state.sql" />
     <InternalsVisibleTo Include="Dps.SoulRegistry.Tests" />
+    <InternalsVisibleTo Include="Dps.SoulCurrent.SignerFixture" />
   </ItemGroup>
 </Project>

@@ -6,6 +6,7 @@
     <RootNamespace>Dps.ControlPlaneHost</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../../soul-registry/src/Dps.SoulRegistry.csproj" />
     <PackageReference Include="Npgsql" />
     <ProjectReference Include="../../contracts/Dps.ControlPlaneHost.Contracts/Dps.ControlPlaneHost.Contracts.csproj" />
     <ProjectReference Include="../../../policy-approval/contracts/provided/Dps.PolicyApproval.Contracts/Dps.PolicyApproval.Contracts.csproj" />
