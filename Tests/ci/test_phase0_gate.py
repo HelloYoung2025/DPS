@@ -1599,6 +1599,48 @@ bash scripts/dotnet-pinned.sh test Modules/alpha/tests/Alpha.Tests.csproj --conf
         self.assertEqual("PASS", check["status"])
         self.assertEqual(1, check["details"]["executed_tests"])
 
+    def test_required_repository_static_contract_runs_as_unittest(self):
+        suite = self.suite(
+            "python3.12 -m unittest Modules/alpha/tests/test_smoke.py", "contract"
+        )
+        manifest = module_manifest("alpha")
+        manifest["tests"] = {"suites": [suite]}
+        (self.module_root / "module.yaml").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+
+        (check,) = run_required_module_static_tests(self.fixture.root)
+        self.assertEqual("PASS", check["status"])
+        self.assertEqual("contract", check["details"]["test_type"])
+        self.assertEqual("REPOSITORY_STATIC_VERIFIED", check["details"]["evidence_level"])
+        self.assertEqual(1, check["details"]["executed_tests"])
+        self.assertEqual(
+            [sys.executable, "-I", "-m", "unittest", "discover"],
+            check["details"]["effective_command"][:5],
+        )
+
+    def test_repository_static_contract_keeps_level_type_and_command_bounds(self):
+        unittest_command = "python3.12 -m unittest Modules/alpha/tests/test_smoke.py"
+        cases = (
+            ("contract", "CONTRACT_VERIFIED", unittest_command, "no required"),
+            ("integration", "REPOSITORY_STATIC_VERIFIED", unittest_command, "suite type"),
+            ("unknown", "REPOSITORY_STATIC_VERIFIED", unittest_command, "suite type"),
+            ("contract", "REPOSITORY_STATIC_VERIFIED", "python3.12 Modules/alpha/tests/test_smoke.py", "direct Python scripts"),
+        )
+        for test_type, level, command, reason in cases:
+            with self.subTest(test_type=test_type, level=level, command=command):
+                suite = self.suite(command, test_type)
+                suite["evidenceLevel"] = level
+                manifest = module_manifest("alpha")
+                manifest["tests"] = {"suites": [suite]}
+                (self.module_root / "module.yaml").write_text(
+                    json.dumps(manifest), encoding="utf-8"
+                )
+                (check,) = run_required_module_static_tests(self.fixture.root)
+                self.assertEqual("FAIL", check["status"])
+                self.assertEqual(0, check["details"].get("executed_tests", 0))
+                self.assertIn(reason, check["log"])
+
     def test_shell_metacharacter_is_rejected(self):
         with self.assertRaisesRegex(Phase0Error, "metacharacters"):
             self.parse(

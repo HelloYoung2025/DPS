@@ -2,6 +2,10 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Phase 0 repository-static contract dispatch
+
+- Run required `contract` suites declared at `REPOSITORY_STATIC_VERIFIED` through the existing trusted Phase 0 suite executor. Keep the parser default, static evidence ceiling, command validation, required checks, and formal issuance boundaries unchanged.
+
 ### Legacy Phase 0 diagnostic command adapter
 
 - Run the four byte-preserved legacy Manifest Python commands only in Phase 0 workspace diagnostics, retaining isolated mode and the protected 25/9/10 test floors. A fixed parser binds each command to its module, suite ID, type and script; other Python command handling is unchanged.

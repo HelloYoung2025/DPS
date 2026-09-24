@@ -2388,6 +2388,7 @@ def run_required_module_static_tests(
             try:
                 plan = parse_manifest_suite_command(
                     root, module_root, module_id, suite,
+                    allowed_test_types=("static", "unit", "contract"),
                     diagnostic_workspace=diagnostic_workspace,
                 )
             except Phase0Error as exc:
