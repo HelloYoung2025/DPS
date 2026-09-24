@@ -265,7 +265,7 @@
       "suiteId": "windows-edge-worker.contract",
       "testTarget": "Modules/windows-edge-worker/tests/Dps.WindowsEdgeWorker.Tests.csproj",
       "testCategory": "Contract",
-      "minimumExecutedTests": 9
+      "minimumExecutedTests": 10
     },
     {
       "moduleId": "windows-edge-worker",
@@ -597,7 +597,7 @@
       "evidenceKind": "SIMULATION",
       "testTarget": "Modules/windows-edge-worker/tests/Dps.WindowsEdgeWorker.Tests.csproj",
       "testCategory": "Integration",
-      "minimumExecutedTests": 45,
+      "minimumExecutedTests": 47,
       "requiredEnvironment": []
     },
     {

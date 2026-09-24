@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P18-B Worker candidate floor integration
+
+- Integrate the previously branch-local Worker candidate floor correction on the P05 Gate Inventory baseline: Contract 9 to 10 and failure-simulation 45 to 47, matching the existing Worker test script. Update only the two expected policy values and the corresponding Manifest and test documentation; retain Unit 13, Soul schema corpus 6, required suites, runtime contracts, and non-counting Unix diagnostics.
+- The earlier P18-B independent QA confirmed its targeted before/after floor regressions and schemas, but its full CI failed and four .NET checks were not run. That partial evidence does not transfer to this integrated candidate. New build, required suites, cumulative gates, and independent QA bind their own exact results; no formal verification level or release follows from this edit.
+
 ### P05-R2 Soul proof replay binding
 
 - Check a persisted alias proof against the exact replay request, its verification row ID and metadata, and the owner's signed alias-reference commitment before either normal replay or uncertain-commit readback returns it. Inconsistent uncertain-commit readback remains `COMMIT_UNKNOWN`; valid same-request replay, signature and time checks remain in place.

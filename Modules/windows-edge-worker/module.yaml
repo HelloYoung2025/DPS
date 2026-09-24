@@ -234,7 +234,7 @@
         "type": "contract",
         "required": true,
         "command": "bash Modules/windows-edge-worker/operations/test.sh Contract",
-        "environment": "macos or Windows with .NET 10; hardened local Contract floor is 10 and the central candidate floor remains 9",
+        "environment": "macos or Windows with .NET 10; hardened local and central candidate Contract floors are both 10",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
       {
@@ -250,7 +250,7 @@
         "type": "integration",
         "required": true,
         "command": "bash Modules/windows-edge-worker/operations/test.sh Integration",
-        "environment": "deterministic cross-platform transport, process restart, writer fencing, live-path replacement blocking or rejection, file integrity, resource ceilings, and legacy native.stop.proof/v1 zero-call zero-wire quarantine/restart simulation; hardened local Integration floor is 47 and the central candidate floor remains 45. Unix symlink, hardlink, FIFO, mode, and effective-user checks are separately labelled non-counting UnixDiagnostic evidence. Windows ACL, reparse/file-ID, ZennoDroid, production-key, and device gates remain NOT_RUN and WAITING_EXTERNAL",
+        "environment": "deterministic cross-platform transport, process restart, writer fencing, live-path replacement blocking or rejection, file integrity, resource ceilings, and legacy native.stop.proof/v1 zero-call zero-wire quarantine/restart simulation; hardened local and central candidate Integration floors are both 47. Unix symlink, hardlink, FIFO, mode, and effective-user checks are separately labelled non-counting UnixDiagnostic evidence. Windows ACL, reparse/file-ID, ZennoDroid, production-key, and device gates remain NOT_RUN and WAITING_EXTERNAL",
         "evidenceLevel": "INTEGRATION_VERIFIED"
       }
     ]

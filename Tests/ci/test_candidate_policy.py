@@ -55,7 +55,7 @@ EXPECTED_CONTRACT_FLOORS = {
     "soul-registry.schema-corpus": 6,
     "windows-edge-supervisor.contract": 13,
     "windows-edge-supervisor.contract-schema": 7,
-    "windows-edge-worker.contract": 9,
+    "windows-edge-worker.contract": 10,
     "windows-edge-worker.provider-contracts": 6,
     "zenno-bridge.contract-schema": 5,
     "zenno-bridge.contract-wire": 2,
@@ -90,7 +90,7 @@ EXPECTED_INTEGRATION_FLOORS = {
     "soul-memory-adapter.postgres-integration": 9,
     "soul-registry.integration": 5,
     "windows-edge-supervisor.ab-simulation": 2,
-    "windows-edge-worker.failure-simulation": 45,
+    "windows-edge-worker.failure-simulation": 47,
     "zenno-bridge.auth-simulation": 4,
 }
 
