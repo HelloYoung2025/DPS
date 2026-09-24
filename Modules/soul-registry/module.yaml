@@ -135,7 +135,14 @@
   "data": {
     "ownedStores": [
       "postgresql:soul_registry.souls",
-      "postgresql:soul_registry.identity_aliases"
+      "postgresql:soul_registry.identity_aliases",
+      "postgresql:soul_registry.resolution_receipts",
+      "postgresql:soul_registry.mutation_receipts",
+      "postgresql:soul_registry.identity_verifications",
+      "postgresql:soul_registry.identity_authority_aliases",
+      "postgresql:soul_registry.soul_current_state",
+      "postgresql:soul_registry.identity_authority_receipts",
+      "postgresql:soul_registry.identity_authority_events"
     ],
     "readModels": [
       "soul-by-verified-alias"
@@ -220,7 +227,7 @@
         "type": "integration",
         "required": true,
         "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Integration --minimum-expected-tests 1 --fail-skips on",
-        "environment": "PostgreSQL 18.4 local integration",
+        "environment": "real isolated PostgreSQL 18.4; synthetic test-owned issuer only; retained Soul-to-Ledger v1 positive path remains required",
         "evidenceLevel": "INTEGRATION_VERIFIED"
       }
     ]

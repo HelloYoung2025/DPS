@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an internal, test-composed Soul-only Verify/Apply core, additive 003 authority-state migration, signed retained-key references, durable nonce/idempotency receipts and owner-current revision/lease. Real PostgreSQL tests include backend termination and a dropped COMMIT acknowledgement. Production issuer, Binding composition, public current route and P06/P11 handoff remain unavailable; no formal level is claimed.
+
 - Add proposed owner identity DTO/codecs, four closed schemas and shared synthetic corpus, plus current/alias port declarations and split legal wire versus legacy audit encoding. Add full corpus/commitment/schema tests; no production provider, key root, lease implementation or new consumer edge. Stage I implementation only; runtime tests and independent QA remain pending.
 
 - Tightened the full identity envelope to exact opaque `soul_`/`db_`/`pa_`/`trace_`/`idem_` forms at Schema, DTO, PostgreSQL, and adversarial-test boundaries; timestamps and digests now reject non-canonical suffixes and case.

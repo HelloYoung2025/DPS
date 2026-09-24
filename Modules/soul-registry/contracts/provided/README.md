@@ -7,3 +7,5 @@ Only this module may change schemas owned here. Additive changes stay within a m
 The owner pack now contains `soul.alias.verify.request/v1`, `soul.alias.verification/v1`, `soul.current.query/v1` and `soul.current.resolution/v1`, registered as proposed/quarantine-only. This registration is not an implemented quarantine handler or production provider. Request producers remain Host or the four explicit current callers, not the schema owner by default. No consumer is newly registered.
 
 The shared owner corpus covers every required field deletion, unknown/type/format/numeric/null boundary, caller-purpose and nested resolution case plus raw codec-only attacks. Preserve all stable IDs. The original `soul.resolved/v1` schema and ten legacy receipt fixtures remain byte-frozen. No raw alias, proof or key material belongs in these public assets.
+
+P05-R1 adds only an internal, test-composed decision core behind these unchanged DTOs. No public `ISoulAliasClientV1` or `ISoulCurrentClientV1` production implementation is registered. An owner-local `ACTIVE` state is not a verified device/account Binding tuple, and a historical result receipt is not a current-resolution proof.

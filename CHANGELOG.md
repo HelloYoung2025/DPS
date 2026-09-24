@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05-R1 Soul-only local authority
+
+- Add an internal Soul Registry Verify/Apply decision core with synthetic test-owned signing input, an additive owner-state migration, nonce/idempotency receipts, signed all-key alias references and a Soul-only PostgreSQL advisory lease. Keep legacy aliases and receipts unchanged and untrusted for current identity; old writers must not run against new authority rows without a compatible guard.
+- Add real PostgreSQL 18.4 adversarial tests for collision, legacy upgrade, revocation/lease serialization, backend loss, pre-commit rollback/recovery and actual COMMIT acknowledgement loss with exact receipt readback. The complete Soul Integration suite retains the separately owned Soul-to-Ledger v1 positive failure. This local work does not activate protected production trust, Binding current, P06/P11 handoff or formal verification.
+
 ### P05 identity owner contract assets, Stage I
 
 - Add four proposed/quarantine-only Soul identity contracts with strict bounded UTF8 codecs, exact canonical commitments and public alias/current/lease declarations. Public DTOs and signed-looking data do not confer authority. No provider, signer, current factory, lease implementation, migration, production adapter or consumer edge is activated.

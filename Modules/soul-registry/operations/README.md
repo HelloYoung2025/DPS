@@ -18,8 +18,14 @@ Rollout order is synthetic test, shadow, bounded canary, rolling waves, and soak
 
 Rollback restores routing and the previous compatible signed BOM. It must not pretend that external side effects or destructive data changes were reversed; those require stop, reconcile, compensate, or restore procedures.
 
-## Identity contract assets remain inactive
+## Stage I identity contract assets were inactive
 
 P05 adds owner DTO/codec/canonical/schema assets and public port declarations only. The four new manifest entries remain proposed/quarantine-only, without a new consumer edge or runtime handler. No alias verifier, signer, current factory or lease provider is activated; no trust root, nonce store or database migration is introduced. Decoder success, a signed-looking DTO or the old receipt replay path cannot authorize a current mutation.
 
 Freeze and independently verify the actual candidate before any downstream asset handoff. Full current capability and lifecycle/integration work remains outstanding, and this asset slice does not satisfy P05's real-capability dependency exit to P06/P11. Stage I is IMPLEMENTED_UNVERIFIED; Stage II environment and project tests require their own bound authorization.
+
+## P05-R1 Soul-only local decision core
+
+An internal test-composed core now verifies an evidence provider's exact request commitment, signs and validates the owner alias proof, records nonce and complete retained-key references, and atomically applies create/attach/resolve/revoke to separate authenticated alias rows. It checks old alias rows for conflicts without promoting them. Soul current revision and revocation epoch are owner-local; a nonpooled PostgreSQL session holds the same advisory key that owner mutations take in their transactions. COMMIT response loss is reconciled against the exact idempotency receipt after the original connection is closed. Missing or mismatched readback remains `COMMIT_UNKNOWN`.
+
+No protected production evidence resolver, signing key, fixed release BOM or authenticated caller route is installed. The class has only an internal constructor and the four public identity contracts remain `quarantine-only`; public current-resolution signing and Binding composition are absent. A local Soul lease cannot promise that a separate Ledger transaction has committed, especially if its acknowledgement is unknown. Rollout, canary and release remain disabled; the safe stop is to leave routing closed. Do not downgrade 003 or restart an old writer after authority rows exist without a separately proved compatibility path.

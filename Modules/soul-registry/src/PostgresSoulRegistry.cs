@@ -10,10 +10,13 @@ namespace Dps.SoulRegistry;
 public sealed class PostgresSoulRegistry : IDisposable
 {
     private static readonly string[] MigrationResourceSuffixes =
-        ["001_create_soul_registry.sql", "002_record_receipt_hash_basis.sql"];
+        ["001_create_soul_registry.sql", "002_record_receipt_hash_basis.sql", "003_add_identity_authority_state.sql"];
     private readonly SoulRegistryOptions _options;
     private readonly AliasDigester _digester;
     private readonly SoulRegistryFaultInjector? _faultInjector;
+
+    internal SoulRegistryOptions Options => _options;
+    internal AliasDigester Digester => _digester;
 
     public PostgresSoulRegistry(
         SoulRegistryOptions options,
@@ -84,6 +87,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         }
 
         await AcquireAliasLocksAsync(connection, transaction, request.TenantId, references, cancellationToken);
+        await RejectAuthorityAliasCollisionAsync(connection, transaction, request.TenantId, references, cancellationToken);
         var matches = await ReadAliasMatchesAsync(connection, transaction, request.TenantId, references, cancellationToken);
         var activeMatches = matches.Where(static match => match.RevokedAt is null).ToArray();
         var distinctActiveSouls = activeMatches.Select(static match => match.SoulId).Distinct(StringComparer.Ordinal).ToArray();
@@ -340,7 +344,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         }
     }
 
-    private static async Task AcquireLockAsync(
+    internal static async Task AcquireLockAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         string lockName,
@@ -354,7 +358,7 @@ public sealed class PostgresSoulRegistry : IDisposable
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task AcquireAliasLocksAsync(
+    internal static async Task AcquireAliasLocksAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         string tenantId,
@@ -369,6 +373,30 @@ public sealed class PostgresSoulRegistry : IDisposable
                 $"alias:{tenantId}:{reference.Kind}:{reference.KeyId}:{reference.Digest}",
                 cancellationToken);
         }
+    }
+
+    private async Task RejectAuthorityAliasCollisionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string tenantId,
+        IReadOnlyList<AliasReference> references,
+        CancellationToken cancellationToken)
+    {
+        var predicates = references.Select((_, index) =>
+            $"(alias_kind = @kind_{index} AND alias_key_id = @key_{index} AND alias_digest = @digest_{index})");
+        await using var command = new NpgsqlCommand(
+            $"SELECT 1 FROM {_options.SchemaName}.identity_authority_aliases " +
+            $"WHERE tenant_ref = @tenant_ref AND ({string.Join(" OR ", predicates)}) LIMIT 1",
+            connection, transaction);
+        command.Parameters.AddWithValue("tenant_ref", tenantId);
+        for (var index = 0; index < references.Count; index++)
+        {
+            command.Parameters.AddWithValue($"kind_{index}", references[index].Kind);
+            command.Parameters.AddWithValue($"key_{index}", references[index].KeyId);
+            command.Parameters.AddWithValue($"digest_{index}", references[index].Digest);
+        }
+        if (await command.ExecuteScalarAsync(cancellationToken) is not null)
+            throw new AliasConflictException();
     }
 
     private async Task<IReadOnlyList<AliasRow>> ReadAliasMatchesAsync(

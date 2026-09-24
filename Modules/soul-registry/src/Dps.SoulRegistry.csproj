@@ -11,6 +11,7 @@
     <ProjectReference Include="../contracts/Dps.SoulRegistry.Contracts.csproj" />
     <EmbeddedResource Include="../migrations/001_create_soul_registry.sql" />
     <EmbeddedResource Include="../migrations/002_record_receipt_hash_basis.sql" />
+    <EmbeddedResource Include="../migrations/003_add_identity_authority_state.sql" />
     <InternalsVisibleTo Include="Dps.SoulRegistry.Tests" />
   </ItemGroup>
 </Project>
