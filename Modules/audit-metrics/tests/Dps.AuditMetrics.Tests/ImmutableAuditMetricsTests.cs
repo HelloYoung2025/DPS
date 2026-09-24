@@ -95,13 +95,14 @@ public sealed class ImmutableAuditMetricsTests
     [Trait("Category", "Contract")]
     public void CanonicalBindingsMatchGoldenVectors()
     {
+        // Independent Audit-local vectors: contracts/provided/audit.relay.v1.canonical.json (Proposed profile v1).
         var receipt = Receipt();
-        Assert.Equal("78cafd8be104aa37aee99fa84e2421a6e1d92a1914f22c0b50c863ff056581d5", AuditRelayAuthorizationBinding.ComputeReceiptSha256(receipt));
+        Assert.Equal("fc6e22ff2519f910d3b5d667d0c2efa64d318686626240e6df062c2b417f46e3", AuditRelayAuthorizationBinding.ComputeReceiptSha256(receipt));
 
         var canonicalEnvelope = EcdsaAuditRelayAuthorizationVerifier.CanonicalBytes(Envelope(receipt) with { SignatureBase64 = "" });
         try
         {
-            Assert.Equal("f073f9082c84ff50c711ccb3fb0743421b12b36a499131e59f9712641b22baac", Convert.ToHexStringLower(SHA256.HashData(canonicalEnvelope)));
+            Assert.Equal("df50467b450690e4832b2b8a050963103d8dd09149db7bbd929207b365d9eeca", Convert.ToHexStringLower(SHA256.HashData(canonicalEnvelope)));
         }
         finally { CryptographicOperations.ZeroMemory(canonicalEnvelope); }
     }
@@ -110,8 +111,44 @@ public sealed class ImmutableAuditMetricsTests
     [Trait("Category", "Contract")]
     public void DelimiterCollisionCannotReuseReceiptDigestOrSignature()
     {
-        var receiptA = Receipt() with { TraceId = "a", IdempotencyKey = "b|c" };
-        var receiptB = Receipt() with { TraceId = "a|b", IdempotencyKey = "c" };
+        var invalidA = Receipt() with { TraceId = "a", IdempotencyKey = "b|c" };
+        var invalidB = Receipt() with { TraceId = "a|b", IdempotencyKey = "c" };
+        foreach (var invalid in new[] { invalidA, invalidB })
+        {
+            Assert.Throws<ArgumentException>(() => AuditRelayAuthorizationBinding.ComputeReceiptSha256(
+                Receipt() with { TraceId = invalid.TraceId }));
+            Assert.Throws<ArgumentException>(() => AuditRelayAuthorizationBinding.ComputeReceiptSha256(
+                Receipt() with { IdempotencyKey = invalid.IdempotencyKey }));
+        }
+
+        // These invalid tuples exercise only the real low-level frame, not accepted receipts.
+        Assert.Equal(string.Join("|", invalidA.TraceId, invalidA.IdempotencyKey),
+            string.Join("|", invalidB.TraceId, invalidB.IdempotencyKey));
+        var encoding = typeof(AuditRelayAuthorizationBinding).Assembly.GetType("Dps.AuditMetrics.AuditCanonicalEncoding");
+        Assert.NotNull(encoding);
+        var encodeReceipt = encoding.GetMethod("CommandReceipt",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static,
+            binder: null, types: [typeof(CommandReceiptV1)], modifiers: null);
+        Assert.NotNull(encodeReceipt);
+        var frameA = Assert.IsType<byte[]>(encodeReceipt.Invoke(null, [invalidA]));
+        var frameB = Assert.IsType<byte[]>(encodeReceipt.Invoke(null, [invalidB]));
+        try
+        {
+            Assert.NotEmpty(frameA);
+            Assert.NotEmpty(frameB);
+            Assert.False(frameA.AsSpan().SequenceEqual(frameB));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(frameA);
+            CryptographicOperations.ZeroMemory(frameB);
+        }
+
+        var receiptA = Receipt();
+        var receiptB = receiptA with { TraceId = "trace_" + new string('3', 32), IdempotencyKey = "idem_" + new string('4', 64) };
+        receiptA.Validate();
+        receiptB.Validate();
+        Assert.Equal(receiptA.ReceiptId, receiptB.ReceiptId);
         Assert.NotEqual(AuditRelayAuthorizationBinding.ComputeReceiptSha256(receiptA), AuditRelayAuthorizationBinding.ComputeReceiptSha256(receiptB));
 
         using var signer = ECDsa.Create(ECCurve.NamedCurves.nistP256);

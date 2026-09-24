@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,8 +15,22 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
     {
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        WriteIndented = false
+        WriteIndented = false,
+        Converters = { new RawLifecycleUtcWriter() }
     };
+
+    private sealed class RawLifecycleUtcWriter : JsonConverter<DateTimeOffset>
+    {
+        public override DateTimeOffset Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            => throw new NotSupportedException("Raw lifecycle fixtures only write JSON.");
+
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options)
+        {
+            if (value.Offset != TimeSpan.Zero)
+                throw new JsonException("Raw lifecycle timestamps must be UTC.");
+            writer.WriteStringValue(value.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", CultureInfo.InvariantCulture));
+        }
+    }
 
     [Fact, Trait("Category", "Integration")]
     public async Task RawTransitionCredentialsCannotForgeEvidenceOrReuseOldAttemptAndLease()

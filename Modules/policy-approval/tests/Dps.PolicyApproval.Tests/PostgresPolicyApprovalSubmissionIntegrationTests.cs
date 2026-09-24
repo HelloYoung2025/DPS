@@ -566,6 +566,31 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var database = await PolicyApprovalTestDatabase.CreateAsync(cancellationToken);
+        using var evaluationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var revocationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var fenceSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var executorSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var reconciliationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var recoverySigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var stateSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var authorityTopology = SubmissionTopology(evaluationSigner, revocationSigner, fenceSigner, executorSigner, reconciliationSigner, recoverySigner, stateSigner);
+        var (proposal, snapshot) = await IssueApprovedAsync(
+            database, evaluationSigner, revocationSigner, authorityTopology, "append-only-pending", cancellationToken);
+        var request = FenceRequest(snapshot);
+        var intent = SignSubmissionIntent(executorSigner, SubmissionIntent(snapshot, proposal, request));
+        using (var client = CreateSubmissionClient(database, authorityTopology, fenceSigner, executorSigner, reconciliationSigner, recoverySigner, stateSigner))
+        {
+            var lease = await client.AcquireAsync(request, SignFenceAuthorization(fenceSigner, request), intent, cancellationToken);
+            Assert.Equal(lease.Fence, await lease.RevalidateForNativeDispatchAsync(cancellationToken));
+            var begin = await lease.BeginSubmissionAsync(intent, cancellationToken);
+            Assert.Equal(PolicyApprovalSubmissionBeginDisposition.Inserted, begin.Disposition);
+            Assert.Equal(ApprovalSubmissionStateV1.SubmissionPending, begin.PendingReceipt.State);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => lease.DisposeAsync().AsTask());
+            var persisted = await client.ReadSubmissionAsync(intent.SubmissionAttemptId, cancellationToken);
+            Assert.Equal(ApprovalSubmissionStateV1.SubmissionPending, persisted.State.State);
+            Assert.Equal(begin.PendingReceipt.StateSha256, persisted.PendingStateSha256);
+        }
+
         await using var runtime = new NpgsqlConnection(database.SubmissionExecutorOptions.ExecutorConnectionString);
         await runtime.OpenAsync(cancellationToken);
         await PolicyApprovalTestDatabase.AssertSqlStateAsync(
@@ -632,14 +657,6 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
                          """, owner) { CommandTimeout = 5 })
             await transferFunctionOwnership.ExecuteNonQueryAsync(cancellationToken);
 
-        using var evaluationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var revocationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var fenceSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var executorSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var reconciliationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var recoverySigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var stateSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var authorityTopology = SubmissionTopology(evaluationSigner, revocationSigner, fenceSigner, executorSigner, reconciliationSigner, recoverySigner, stateSigner);
         using var runtimeService = database.CreateService(
             evaluationSigner,
             revocationSigner,
@@ -702,11 +719,46 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             aclDriftRecoveryClient.ReadSubmissionAsync(Guid.NewGuid(), cancellationToken));
 
+        string[] lifecycleTables =
+        [
+            "approval_submission_attempts", "approval_submission_acknowledgements",
+            "approval_submission_quarantines", "approval_submission_reconciliations",
+            "approval_submission_recoveries"
+        ];
+        async Task<string[]> ReadLifecycleRowsAsync()
+        {
+            var rows = new List<string>();
+            foreach (var table in lifecycleTables)
+            {
+                await using var read = new NpgsqlCommand(
+                    $"""
+                    SELECT COALESCE(jsonb_agg(to_jsonb(entry) ORDER BY to_jsonb(entry)::text COLLATE "C"), '[]'::jsonb)::text
+                    FROM {database.SchemaName}.{table} AS entry
+                    """, owner) { CommandTimeout = 5 };
+                rows.Add((string)(await read.ExecuteScalarAsync(cancellationToken)
+                    ?? throw new InvalidOperationException("Lifecycle snapshot returned no result.")));
+            }
+            return rows.ToArray();
+        }
+
+        var beforeTruncate = await ReadLifecycleRowsAsync();
+        Assert.NotEqual("[]", beforeTruncate[0]);
         await PolicyApprovalTestDatabase.AssertSqlStateAsync(
             owner,
             $"TRUNCATE {database.SchemaName}.approval_submission_attempts",
-            "P0001",
+            "0A000",
             cancellationToken);
+        Assert.Equal(beforeTruncate, await ReadLifecycleRowsAsync());
+
+        await using var truncateAll = new NpgsqlCommand(
+            "TRUNCATE " + string.Join(", ", lifecycleTables.Select(table => $"{database.SchemaName}.{table}")) + " RESTRICT",
+            owner) { CommandTimeout = 5 };
+        var appendOnlyError = await Assert.ThrowsAsync<PostgresException>(() =>
+            truncateAll.ExecuteNonQueryAsync(cancellationToken));
+        Assert.Equal("P0001", appendOnlyError.SqlState);
+        Assert.Equal("policy-approval rows are append-only", appendOnlyError.MessageText);
+        Assert.Contains("reject_policy_approval_mutation()", appendOnlyError.Where);
+        Assert.Equal(beforeTruncate, await ReadLifecycleRowsAsync());
     }
 
     private static async Task<(ActionProposalV1 Proposal, PolicyApprovalAuthoritativeSnapshot Snapshot)> IssueApprovedAsync(

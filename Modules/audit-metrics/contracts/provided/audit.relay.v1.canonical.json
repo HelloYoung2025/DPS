@@ -1,0 +1,477 @@
+{
+  "profile_id": "dps.audit.relay.canonical-profile/v1",
+  "profile_revision": 1,
+  "status": "Proposed",
+  "activated": false,
+  "specification": "../README.md#proposed-audit-relay-canonical-profile-v1",
+  "observed_source_commit": "23d92b84ceff1ab40e7e751fa23da5dfea6bd608",
+  "scope": "Audit-local receipt digest and relay signature preimage; not a new command.receipt owner or active wire contract",
+  "ownership": {
+    "receipt_owner": "command-orchestrator",
+    "receipt_wire_producer": "executor-gateway",
+    "relay_sender": "command-orchestrator",
+    "relay_receiver": "audit-metrics",
+    "dependency": "audit-metrics -> command-orchestrator"
+  },
+  "compatibility_choice": "Preserve observed Audit bytes for accepted inputs; this is proposed agreement, not historical correctness or deployment proof. No product, old golden, Manifest or trust activation change.",
+  "encoding": {
+    "frame": "concatenate uint32-big-endian UTF-8-byte-length followed by UTF-8 bytes for each ordered token",
+    "field_names_encoded": false,
+    "domain_is_first_token": true,
+    "bom": false,
+    "terminator": false,
+    "trailing_newline": false,
+    "digest": "SHA-256, lowercase hex",
+    "strings": "verbatim; no trim, case folding, Unicode normalization or JSON quoting",
+    "malformed_utf16": "Current Audit replacement fallback: paired surrogates form scalar; isolated high/low surrogate -> U+FFFD. Diagnostic behavior, not accepted-ingestion authority. Command strict UTF-8 differs.",
+    "guid": "32 lowercase hex digits; no hyphens/braces",
+    "nullable_guid": "null -> empty token; non-null Guid.Empty -> 32 zero hex digits; no presence token",
+    "integer": "invariant ASCII decimal; receipt Attempt 1..3",
+    "boolean": "true or false ASCII",
+    "version": "accepted original string unchanged; never rewrite to 1.0.0",
+    "timestamp": "yyyy-MM-ddTHH:mm:ss.fffffff+00:00 for accepted zero-offset typed values, seven fractional digits; input Z and +00:00 render identically; reject nonzero offset, never convert. Low-level relay encoder does not validate and preserves supplied offset."
+  },
+  "frames": {
+    "receipt": {
+      "domain": "dps.audit.command-receipt/v1",
+      "ordered_fields": [
+        {
+          "name": "schema_version",
+          "type": "string"
+        },
+        {
+          "name": "contract_id",
+          "type": "string"
+        },
+        {
+          "name": "producer_module",
+          "type": "string"
+        },
+        {
+          "name": "receipt_id",
+          "type": "guid"
+        },
+        {
+          "name": "command_id",
+          "type": "guid"
+        },
+        {
+          "name": "lease_id",
+          "type": "guid"
+        },
+        {
+          "name": "attempt",
+          "type": "integer"
+        },
+        {
+          "name": "soul_id",
+          "type": "string"
+        },
+        {
+          "name": "device_binding_id",
+          "type": "string"
+        },
+        {
+          "name": "platform_account_id",
+          "type": "string"
+        },
+        {
+          "name": "trace_id",
+          "type": "string"
+        },
+        {
+          "name": "idempotency_key",
+          "type": "string"
+        },
+        {
+          "name": "occurred_at",
+          "type": "utc-timestamp"
+        },
+        {
+          "name": "privacy_class",
+          "type": "string"
+        },
+        {
+          "name": "outcome",
+          "type": "string"
+        },
+        {
+          "name": "native_result_id",
+          "type": "nullable-guid"
+        },
+        {
+          "name": "native_result_verified",
+          "type": "boolean"
+        },
+        {
+          "name": "postcondition_verified",
+          "type": "boolean"
+        },
+        {
+          "name": "evidence_digest",
+          "type": "string"
+        },
+        {
+          "name": "retry_allowed",
+          "type": "boolean"
+        },
+        {
+          "name": "result_code",
+          "type": "string"
+        }
+      ],
+      "covered": "All 21 receipt fields plus domain",
+      "excludes": []
+    },
+    "relay": {
+      "domain": "dps.audit.relay-envelope/v1",
+      "ordered_fields": [
+        {
+          "name": "caller_module",
+          "type": "string"
+        },
+        {
+          "name": "auth_scope",
+          "type": "string"
+        },
+        {
+          "name": "receipt_id",
+          "type": "guid"
+        },
+        {
+          "name": "receipt_sha256",
+          "type": "string"
+        },
+        {
+          "name": "expires_at",
+          "type": "utc-timestamp"
+        },
+        {
+          "name": "release_bom_sha256",
+          "type": "string"
+        }
+      ],
+      "covered": "Six envelope members plus domain; receipt indirectly bound through Audit-local receipt_sha256 and receipt_id",
+      "excludes": [
+        "signature_base64"
+      ],
+      "signature": {
+        "algorithm": "ECDSA NIST P-256 with SHA-256 over full relay preimage once",
+        "format": "IEEE P1363 fixed-width r || s, 64 bytes",
+        "encoding": "Base64; existing Audit verifier does not require canonical round-trip spelling",
+        "key": "injected NIST P-256 SPKI public key; digest vectors supply no signer authority"
+      }
+    }
+  },
+  "validation_boundary": {
+    "receipt_hash_entry": "CommandReceiptV1.Validate before encoding; full exact rules in README. ResultCode text validation is weaker than successful Audit event label validation. Nullable native Guid.Empty is not rejected.",
+    "relay_encoding_entry": "Checks envelope object non-null only; encoding is not authorization.",
+    "relay_verify_entry": "UTC now/expiry, lowercase digest shapes, matching ReceiptId, ExpiresAt >= now, recomputed Audit digest, Base64 decode and P-256 signature verification.",
+    "ingestion_entry": "Additionally exact command-orchestrator caller and audit:command-receipt scope; derived Audit event/labels validation; production independently trusted current BOM/key state. Current ResultCode .NET regex ^[A-Za-z0-9._:-]+$ can match before one terminal LF, so an otherwise valid VERIFIED followed by U+000A can pass current label checks within the length limit; this is not an absolute-end constraint. The frame retains the LF byte 0a and includes it in the byte length. No trimming, stricter rejection or product change is proposed here.",
+    "not_specified": "No new JSON relay parser/Schema, trust-state or stored-event canonical profile, or wire precision policy beyond typed DateTimeOffset."
+  },
+  "remaining_integration_obligations": [
+    "Command outbound authScope module:audit-metrics differs from Audit inbound/processor audit:command-receipt; no runtime mapping selected.",
+    "No proven real relay signer/composition or complete producer-to-Audit closure.",
+    "Malformed UTF-16 fallback is non-injective outside validated ingestion; strict repair requires separately bound work.",
+    "Current golden FAIL is retained pending independently reviewed profile and separate implementation repair."
+  ],
+  "vectors": [
+    {
+      "id": "original-CanonicalBindingsMatchGoldenVectors-fixture",
+      "provenance": "Modules/audit-metrics/tests/Dps.AuditMetrics.Tests/ImmutableAuditMetricsTests.cs at observed_source_commit; Receipt(), Envelope(), Now and original golden method unchanged",
+      "inputs": {
+        "receipt": {
+          "schema_version": "1.0.0",
+          "contract_id": "command.receipt/v1",
+          "producer_module": "executor-gateway",
+          "receipt_id": "83000000-0000-0000-0000-000000000003",
+          "command_id": "84000000-0000-0000-0000-000000000004",
+          "lease_id": "86000000-0000-0000-0000-000000000006",
+          "attempt": 1,
+          "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device_binding_id": "db_11111111111111111111111111111111",
+          "platform_account_id": "pa_22222222222222222222222222222222",
+          "trace_id": "trace_11111111111111111111111111111111",
+          "idempotency_key": "idem_2222222222222222222222222222222222222222222222222222222222222222",
+          "occurred_at": "2026-01-01T00:00:00Z",
+          "privacy_class": "internal",
+          "outcome": "SUCCESS",
+          "native_result_id": "85000000-0000-0000-0000-000000000005",
+          "native_result_verified": true,
+          "postcondition_verified": true,
+          "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "retry_allowed": false,
+          "result_code": "VERIFIED"
+        },
+        "relay": {
+          "caller_module": "command-orchestrator",
+          "auth_scope": "audit:command-receipt",
+          "receipt_id": "83000000-0000-0000-0000-000000000003",
+          "receipt_sha256": "fc6e22ff2519f910d3b5d667d0c2efa64d318686626240e6df062c2b417f46e3",
+          "expires_at": "2026-01-01T00:01:00Z",
+          "release_bom_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signature_base64": ""
+        }
+      },
+      "fixture_note": "Envelope factory first sets fake-signature; golden method replaces it with empty string. Signature is excluded either way. receipt_sha256 is derived from receipt preimage, never the old golden expected value. No authentic signature is claimed.",
+      "historical_expectations_retained_not_normative": {
+        "receipt_sha256": "78cafd8be104aa37aee99fa84e2421a6e1d92a1914f22c0b50c863ff056581d5",
+        "relay_sha256": "f073f9082c84ff50c711ccb3fb0743421b12b36a499131e59f9712641b22baac"
+      },
+      "derived": {
+        "receipt": {
+          "tokens": [
+            {
+              "name": "domain",
+              "text": "dps.audit.command-receipt/v1",
+              "utf8_length": 28,
+              "prefix_hex": "0000001c",
+              "offset": 0
+            },
+            {
+              "name": "schema_version",
+              "text": "1.0.0",
+              "utf8_length": 5,
+              "prefix_hex": "00000005",
+              "offset": 32
+            },
+            {
+              "name": "contract_id",
+              "text": "command.receipt/v1",
+              "utf8_length": 18,
+              "prefix_hex": "00000012",
+              "offset": 41
+            },
+            {
+              "name": "producer_module",
+              "text": "executor-gateway",
+              "utf8_length": 16,
+              "prefix_hex": "00000010",
+              "offset": 63
+            },
+            {
+              "name": "receipt_id",
+              "text": "83000000000000000000000000000003",
+              "utf8_length": 32,
+              "prefix_hex": "00000020",
+              "offset": 83
+            },
+            {
+              "name": "command_id",
+              "text": "84000000000000000000000000000004",
+              "utf8_length": 32,
+              "prefix_hex": "00000020",
+              "offset": 119
+            },
+            {
+              "name": "lease_id",
+              "text": "86000000000000000000000000000006",
+              "utf8_length": 32,
+              "prefix_hex": "00000020",
+              "offset": 155
+            },
+            {
+              "name": "attempt",
+              "text": "1",
+              "utf8_length": 1,
+              "prefix_hex": "00000001",
+              "offset": 191
+            },
+            {
+              "name": "soul_id",
+              "text": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "utf8_length": 69,
+              "prefix_hex": "00000045",
+              "offset": 196
+            },
+            {
+              "name": "device_binding_id",
+              "text": "db_11111111111111111111111111111111",
+              "utf8_length": 35,
+              "prefix_hex": "00000023",
+              "offset": 269
+            },
+            {
+              "name": "platform_account_id",
+              "text": "pa_22222222222222222222222222222222",
+              "utf8_length": 35,
+              "prefix_hex": "00000023",
+              "offset": 308
+            },
+            {
+              "name": "trace_id",
+              "text": "trace_11111111111111111111111111111111",
+              "utf8_length": 38,
+              "prefix_hex": "00000026",
+              "offset": 347
+            },
+            {
+              "name": "idempotency_key",
+              "text": "idem_2222222222222222222222222222222222222222222222222222222222222222",
+              "utf8_length": 69,
+              "prefix_hex": "00000045",
+              "offset": 389
+            },
+            {
+              "name": "occurred_at",
+              "text": "2026-01-01T00:00:00.0000000+00:00",
+              "utf8_length": 33,
+              "prefix_hex": "00000021",
+              "offset": 462
+            },
+            {
+              "name": "privacy_class",
+              "text": "internal",
+              "utf8_length": 8,
+              "prefix_hex": "00000008",
+              "offset": 499
+            },
+            {
+              "name": "outcome",
+              "text": "SUCCESS",
+              "utf8_length": 7,
+              "prefix_hex": "00000007",
+              "offset": 511
+            },
+            {
+              "name": "native_result_id",
+              "text": "85000000000000000000000000000005",
+              "utf8_length": 32,
+              "prefix_hex": "00000020",
+              "offset": 522
+            },
+            {
+              "name": "native_result_verified",
+              "text": "true",
+              "utf8_length": 4,
+              "prefix_hex": "00000004",
+              "offset": 558
+            },
+            {
+              "name": "postcondition_verified",
+              "text": "true",
+              "utf8_length": 4,
+              "prefix_hex": "00000004",
+              "offset": 566
+            },
+            {
+              "name": "evidence_digest",
+              "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "utf8_length": 64,
+              "prefix_hex": "00000040",
+              "offset": 574
+            },
+            {
+              "name": "retry_allowed",
+              "text": "false",
+              "utf8_length": 5,
+              "prefix_hex": "00000005",
+              "offset": 642
+            },
+            {
+              "name": "result_code",
+              "text": "VERIFIED",
+              "utf8_length": 8,
+              "prefix_hex": "00000008",
+              "offset": 651
+            }
+          ],
+          "byte_length": 663,
+          "preimage_hex": "0000001c6470732e61756469742e636f6d6d616e642d726563656970742f763100000005312e302e3000000012636f6d6d616e642e726563656970742f7631000000106578656375746f722d67617465776179000000203833303030303030303030303030303030303030303030303030303030303033000000203834303030303030303030303030303030303030303030303030303030303034000000203836303030303030303030303030303030303030303030303030303030303036000000013100000045736f756c5f616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161610000002364625f31313131313131313131313131313131313131313131313131313131313131310000002370615f32323232323232323232323232323232323232323232323232323232323232320000002674726163655f3131313131313131313131313131313131313131313131313131313131313131000000456964656d5f3232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323232323200000021323032362d30312d30315430303a30303a30302e303030303030302b30303a303000000008696e7465726e616c00000007535543434553530000002038353030303030303030303030303030303030303030303030303030303030350000000474727565000000047472756500000040616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161610000000566616c7365000000085645524946494544",
+          "sha256": "fc6e22ff2519f910d3b5d667d0c2efa64d318686626240e6df062c2b417f46e3"
+        },
+        "relay": {
+          "tokens": [
+            {
+              "name": "domain",
+              "text": "dps.audit.relay-envelope/v1",
+              "utf8_length": 27,
+              "prefix_hex": "0000001b",
+              "offset": 0
+            },
+            {
+              "name": "caller_module",
+              "text": "command-orchestrator",
+              "utf8_length": 20,
+              "prefix_hex": "00000014",
+              "offset": 31
+            },
+            {
+              "name": "auth_scope",
+              "text": "audit:command-receipt",
+              "utf8_length": 21,
+              "prefix_hex": "00000015",
+              "offset": 55
+            },
+            {
+              "name": "receipt_id",
+              "text": "83000000000000000000000000000003",
+              "utf8_length": 32,
+              "prefix_hex": "00000020",
+              "offset": 80
+            },
+            {
+              "name": "receipt_sha256",
+              "text": "fc6e22ff2519f910d3b5d667d0c2efa64d318686626240e6df062c2b417f46e3",
+              "utf8_length": 64,
+              "prefix_hex": "00000040",
+              "offset": 116
+            },
+            {
+              "name": "expires_at",
+              "text": "2026-01-01T00:01:00.0000000+00:00",
+              "utf8_length": 33,
+              "prefix_hex": "00000021",
+              "offset": 184
+            },
+            {
+              "name": "release_bom_sha256",
+              "text": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "utf8_length": 64,
+              "prefix_hex": "00000040",
+              "offset": 221
+            }
+          ],
+          "byte_length": 289,
+          "preimage_hex": "0000001b6470732e61756469742e72656c61792d656e76656c6f70652f763100000014636f6d6d616e642d6f7263686573747261746f720000001561756469743a636f6d6d616e642d72656365697074000000203833303030303030303030303030303030303030303030303030303030303033000000406663366532326666323531396639313064336235643636376430633265666136346433313836383636323632343065366466303632633262343137663436653300000021323032362d30312d30315430303a30313a30302e303030303030302b30303a30300000004064646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464",
+          "sha256": "df50467b450690e4832b2b8a050963103d8dd09149db7bbd929207b365d9eeca"
+        }
+      }
+    }
+  ],
+  "field_examples": [
+    {
+      "name": "null-guid",
+      "type": "nullable-guid",
+      "input": null,
+      "framed_hex": "00000000"
+    },
+    {
+      "name": "non-null-empty-guid",
+      "type": "nullable-guid",
+      "input": "00000000-0000-0000-0000-000000000000",
+      "framed_hex": "000000203030303030303030303030303030303030303030303030303030303030303030"
+    },
+    {
+      "name": "false",
+      "type": "boolean",
+      "input": false,
+      "framed_hex": "0000000566616c7365"
+    },
+    {
+      "name": "utf8-byte-length-not-character-count",
+      "type": "string",
+      "input": "\u00e9",
+      "framed_hex": "00000002c3a9"
+    },
+    {
+      "name": "isolated-surrogate-diagnostic-not-valid-ingestion",
+      "type": "string",
+      "input": "\ud800",
+      "framed_hex": "00000003efbfbd"
+    }
+  ],
+  "formal_evidence_eligible": false,
+  "verification_level": null
+}
