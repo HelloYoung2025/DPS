@@ -1868,6 +1868,204 @@ bash scripts/dotnet-pinned.sh test Modules/alpha/tests/Alpha.Tests.csproj --conf
         self.assertIn("omitted from solution", check["log"])
 
 
+class LegacyDiagnosticSuiteTests(unittest.TestCase):
+    COMMANDS = {
+        "legacy-runtime-adapter.static": (
+            "static",
+            ".venv/bin/python -I Modules/legacy-runtime-adapter/operations/strangler/verify_sessionrunner_baseline.py --root .",
+            1,
+        ),
+        "legacy-runtime-adapter.byte-baseline-adversarial": (
+            "unit",
+            ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_legacy_byte_baseline.py",
+            25,
+        ),
+        "legacy-runtime-adapter.fail-closed-p0": (
+            "static",
+            ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_sessionrunner_fail_closed_p0.py",
+            9,
+        ),
+        "legacy-runtime-adapter.wrapper-orchestrator-p0": (
+            "static",
+            ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_legacy_wrapper_and_orchestrator_p0.py",
+            10,
+        ),
+    }
+
+    def setUp(self):
+        self.fixture = RepositoryFixture()
+        self.module_root = self.fixture.add_module("legacy-runtime-adapter")
+        interpreter = self.fixture.root / ".venv/bin/python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.symlink_to(sys.executable)
+        for suite_id, (_, command, count) in self.COMMANDS.items():
+            script = self.fixture.root / command.split()[2]
+            script.parent.mkdir(parents=True, exist_ok=True)
+            if suite_id.endswith(".static"):
+                script.write_text(
+                    "import json, os, sys\n"
+                    "anchor = os.environ.get('DPS_LEGACY_BASELINE_ANCHOR')\n"
+                    "print(json.dumps({'schema_version': 'dps.synthetic/v1', "
+                    "'scope': 'STATIC_ONLY', 'ok': bool(anchor), "
+                    "'errors': [] if anchor else ['WAITING_EXTERNAL'], "
+                    "'method_count': 1}))\n"
+                    "sys.exit(0 if anchor else 3)\n",
+                    encoding="utf-8",
+                )
+            else:
+                script.write_text(
+                    "import unittest\n"
+                    "class Cases(unittest.TestCase): pass\n"
+                    "for index in range({0}):\n"
+                    "    setattr(Cases, 'test_{{0}}'.format(index), "
+                    "lambda self: self.assertTrue(True))\n"
+                    "if __name__ == '__main__': unittest.main()\n".format(count),
+                    encoding="utf-8",
+                )
+
+    def tearDown(self):
+        self.fixture.close()
+
+    def parse(self, suite_id, *, diagnostic=True, command=None, test_type=None):
+        expected_type, expected_command, _ = self.COMMANDS[suite_id]
+        return parse_manifest_suite_command(
+            self.fixture.root,
+            self.module_root,
+            "legacy-runtime-adapter",
+            {
+                "id": suite_id,
+                "type": test_type or expected_type,
+                "command": command or expected_command,
+                "required": True,
+                "evidenceLevel": "REPOSITORY_STATIC_VERIFIED",
+            },
+            diagnostic_workspace=diagnostic,
+        )
+
+    def test_four_exact_commands_execute_only_as_diagnostics(self):
+        for suite_id, (_, _, floor) in self.COMMANDS.items():
+            with self.subTest(suite=suite_id):
+                with self.assertRaisesRegex(Phase0Error, "diagnostic"):
+                    self.parse(suite_id, diagnostic=False)
+                plan = self.parse(suite_id)
+                self.assertEqual("-I", plan.invocations[0].argv[1])
+                self.assertEqual(floor, plan.invocations[0].minimum_tests)
+                with mock.patch.dict(os.environ, {"DPS_LEGACY_BASELINE_ANCHOR": ""}):
+                    check = execute_manifest_suite(self.fixture.root, plan)
+                if suite_id.endswith(".static"):
+                    self.assertEqual("FAIL", check["status"])
+                    self.assertEqual(3, check["exit_code"])
+                    self.assertIn("WAITING_EXTERNAL", check["log"])
+                else:
+                    self.assertEqual("PASS", check["status"])
+                    self.assertEqual(floor, check["details"]["executed_tests"])
+                    self.assertEqual(floor, check["details"]["minimum_tests"])
+                self.assertEqual(check["command"], check["details"]["effective_command"])
+                self.assertRegex(check["details"]["interpreter_sha256"], r"^[0-9a-f]{64}$")
+                self.assertIn("raw_combined_output", check["details"])
+                self.assertNotIn(
+                    "DPS_LEGACY_BASELINE_ANCHOR",
+                    check["details"]["effective_environment"],
+                )
+
+    def test_only_exact_suite_and_command_shape_are_admitted(self):
+        suite_id = "legacy-runtime-adapter.byte-baseline-adversarial"
+        _, command, _ = self.COMMANDS[suite_id]
+        for changed in (command + " extra", command.replace(" -I ", " "), command.replace(".venv/bin/python", "python3.12")):
+            with self.subTest(command=changed), self.assertRaises(Phase0Error):
+                self.parse(suite_id, command=changed)
+        with self.assertRaises(Phase0Error):
+            self.parse(suite_id, test_type="static")
+        with self.assertRaises(Phase0Error):
+            parse_manifest_suite_command(
+                self.fixture.root,
+                self.module_root,
+                "alpha",
+                {"id": suite_id, "type": "unit", "command": command, "evidenceLevel": "REPOSITORY_STATIC_VERIFIED"},
+                diagnostic_workspace=True,
+            )
+
+    def test_short_unittest_summary_cannot_meet_protected_floor(self):
+        suite_id = "legacy-runtime-adapter.byte-baseline-adversarial"
+        script = self.fixture.root / self.COMMANDS[suite_id][1].split()[2]
+        script.write_text(script.read_text(encoding="utf-8").replace("range(25)", "range(24)"), encoding="utf-8")
+        check = execute_manifest_suite(self.fixture.root, self.parse(suite_id))
+        self.assertEqual("FAIL", check["status"])
+        self.assertEqual(24, check["details"]["executed_tests"])
+
+    def test_printed_summary_and_skipped_case_are_not_evidence(self):
+        suite_id = "legacy-runtime-adapter.byte-baseline-adversarial"
+        script = self.fixture.root / self.COMMANDS[suite_id][1].split()[2]
+        script.write_text(
+            "print('Ran 25 tests in 0.001s\\n\\nOK')\n", encoding="utf-8"
+        )
+        check = execute_manifest_suite(self.fixture.root, self.parse(suite_id))
+        self.assertEqual("FAIL", check["status"])
+        self.assertIn("progress line", check["log"])
+        script.write_text(
+            "import sys\nsys.stderr.write('.' * 24 + 's\\nRan 25 tests in 0.001s\\n\\nOK (skipped=1)\\n')\n",
+            encoding="utf-8",
+        )
+        check = execute_manifest_suite(self.fixture.root, self.parse(suite_id))
+        self.assertEqual("FAIL", check["status"])
+        self.assertIn("skipped", check["log"])
+
+    def test_interpreter_mismatch_and_link_escape_fail_before_execution(self):
+        suite_id = "legacy-runtime-adapter.byte-baseline-adversarial"
+        interpreter = self.fixture.root / ".venv/bin/python"
+        interpreter.unlink()
+        interpreter.symlink_to("/usr/bin/false")
+        with self.assertRaisesRegex(Phase0Error, "interpreter"):
+            self.parse(suite_id)
+        interpreter.unlink()
+        interpreter.parent.rmdir()
+        outside = self.fixture.root / "outside-bin"
+        outside.mkdir()
+        (outside / "python").symlink_to(sys.executable)
+        interpreter.parent.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(Phase0Error, "link-escaped"):
+            self.parse(suite_id)
+        interpreter.parent.unlink()
+        interpreter.parent.mkdir()
+        interpreter.symlink_to(sys.executable)
+        with mock.patch("run_phase0_gate.REQUIRED_PYTHON", (3, 11, 0)):
+            with self.assertRaisesRegex(Phase0Error, "pinned"):
+                self.parse(suite_id)
+
+    def test_manifest_runner_executes_the_same_four_diagnostic_paths(self):
+        manifest = module_manifest("legacy-runtime-adapter")
+        manifest["tests"] = {
+            "suites": [
+                {
+                    "id": suite_id,
+                    "type": test_type,
+                    "command": command,
+                    "required": True,
+                    "evidenceLevel": "REPOSITORY_STATIC_VERIFIED",
+                }
+                for suite_id, (test_type, command, _) in self.COMMANDS.items()
+            ]
+        }
+        (self.module_root / "module.yaml").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        with mock.patch.dict(os.environ, {"DPS_LEGACY_BASELINE_ANCHOR": ""}):
+            checks = run_required_module_static_tests(
+                self.fixture.root, diagnostic_workspace=True
+            )
+        self.assertEqual(["FAIL", "PASS", "PASS", "PASS"], [check["status"] for check in checks])
+        formal = run_required_module_static_tests(self.fixture.root)
+        self.assertEqual(["FAIL"] * 4, [check["status"] for check in formal])
+        self.assertTrue(all(check["details"]["executed_tests"] == 0 for check in formal))
+
+    def test_anchor_is_forwarded_only_to_static_verifier(self):
+        with mock.patch.dict(os.environ, {"DPS_LEGACY_BASELINE_ANCHOR": "/external/provider.json"}):
+            static = execute_manifest_suite(self.fixture.root, self.parse("legacy-runtime-adapter.static"))
+            unit = execute_manifest_suite(self.fixture.root, self.parse("legacy-runtime-adapter.byte-baseline-adversarial"))
+        self.assertEqual("/external/provider.json", static["details"]["effective_environment"]["DPS_LEGACY_BASELINE_ANCHOR"])
+        self.assertNotIn("DPS_LEGACY_BASELINE_ANCHOR", unit["details"]["effective_environment"])
+
+
 class InstructionReceiptTests(unittest.TestCase):
     def setUp(self):
         self.fixture = RepositoryFixture()

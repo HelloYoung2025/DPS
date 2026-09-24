@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Legacy Phase 0 diagnostic command adapter
+
+- Run the four byte-preserved legacy Manifest Python commands only in Phase 0 workspace diagnostics, retaining isolated mode and the protected 25/9/10 test floors. A fixed parser binds each command to its module, suite ID, type and script; other Python command handling is unchanged.
+- Pass an existing caller-provided external baseline-anchor path only to the static verifier. Missing or invalid anchors remain failures. Record the diagnostic interpreter hash, executed argv, scoped environment, combined raw output and exit without treating a local virtual environment as independently created.
+- Formal Phase 0 still rejects these commands until independent runner provenance and the external provider are available. This change issues no formal verification level and does not alter legacy C# bytes, the Manifest, the verifier or its protected tests.
+
 ### P18-B Worker candidate floor integration
 
 - Integrate the previously branch-local Worker candidate floor correction on the P05 Gate Inventory baseline: Contract 9 to 10 and failure-simulation 45 to 47, matching the existing Worker test script. Update only the two expected policy values and the corresponding Manifest and test documentation; retain Unit 13, Soul schema corpus 6, required suites, runtime contracts, and non-counting Unix diagnostics.

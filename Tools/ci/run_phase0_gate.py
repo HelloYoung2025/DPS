@@ -36,6 +36,7 @@ if str(CI_DIRECTORY) not in sys.path:
 from phase0 import (  # noqa: E402
     REQUIRED_DOTNET_SDK,
     REQUIRED_NODE_VERSION,
+    REQUIRED_PYTHON,
     VERIFICATION_LEVEL,
     CommandResult,
     Phase0Error,
@@ -75,6 +76,32 @@ ALLOWED_TRUSTED_EXECUTOR_ENVIRONMENT = ALLOWED_MANIFEST_ENVIRONMENT | {
     "DPS_TEST_PLATFORM_AUTHORITY_PKCS8_FILE",
 }
 PYTHON_NAMES = {"python", "python3", "python3.12"}
+LEGACY_DIAGNOSTIC_SUITES = {
+    "legacy-runtime-adapter.static": (
+        "static",
+        ".venv/bin/python -I Modules/legacy-runtime-adapter/operations/strangler/verify_sessionrunner_baseline.py --root .",
+        "static-json",
+        1,
+    ),
+    "legacy-runtime-adapter.byte-baseline-adversarial": (
+        "unit",
+        ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_legacy_byte_baseline.py",
+        "python-unittest",
+        25,
+    ),
+    "legacy-runtime-adapter.fail-closed-p0": (
+        "static",
+        ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_sessionrunner_fail_closed_p0.py",
+        "python-unittest",
+        9,
+    ),
+    "legacy-runtime-adapter.wrapper-orchestrator-p0": (
+        "static",
+        ".venv/bin/python -I Modules/legacy-runtime-adapter/tests/test_legacy_wrapper_and_orchestrator_p0.py",
+        "python-unittest",
+        10,
+    ),
+}
 FORBIDDEN_COMMAND_FRAGMENTS = ("\n", "\r", "\x00", "`", "$(`", "${", ";", "|", ">", "<")
 PUBLICATION_SCHEMA_VERSION = "dps.evidence-publication/v1"
 PUBLICATION_MARKER_SUFFIX = ".publication.json"
@@ -1448,6 +1475,45 @@ def _parse_python_invocation(
     )
 
 
+def _parse_legacy_diagnostic_invocation(
+    root: Path,
+    module_root: Path,
+    suite_id: str,
+    test_type: str,
+    command: str,
+    segments: Sequence[Sequence[str]],
+) -> TrustedInvocation:
+    expected = LEGACY_DIAGNOSTIC_SUITES.get(suite_id)
+    if (
+        expected is None
+        or test_type != expected[0]
+        or command != expected[1]
+        or len(segments) != 1
+        or module_root != root / "Modules" / "legacy-runtime-adapter"
+    ):
+        raise Phase0Error("legacy diagnostic suite must match its fixed id, type, and command")
+    executable = root / ".venv" / "bin" / "python"
+    if (root / ".venv").is_symlink() or executable.parent.is_symlink():
+        raise Phase0Error("legacy diagnostic repository .venv is link-escaped")
+    try:
+        resolved = executable.resolve(strict=True)
+        running = Path(sys.executable).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise Phase0Error("legacy diagnostic repository .venv is unavailable") from exc
+    if (
+        resolved != running
+        or not resolved.is_file()
+        or not os.access(str(resolved), os.X_OK)
+        or tuple(sys.version_info[:3]) != REQUIRED_PYTHON
+    ):
+        raise Phase0Error("legacy diagnostic interpreter does not match pinned Phase0 Python")
+    tokens = list(segments[0])
+    script = _safe_existing_path(root, module_root, tokens[2], require_file=True)
+    return TrustedInvocation(
+        [str(executable), "-I", str(script), *tokens[3:]], expected[2], expected[3]
+    )
+
+
 def parse_manifest_suite_command(
     root: Path,
     module_root: Path,
@@ -1456,6 +1522,7 @@ def parse_manifest_suite_command(
     allowed_test_types: Sequence[str] = ("static", "unit"),
     expected_evidence_level: str = VERIFICATION_LEVEL,
     expected_test_category: Optional[str] = None,
+    diagnostic_workspace: bool = False,
 ) -> TrustedSuitePlan:
     suite_id = suite.get("id")
     test_type = suite.get("type")
@@ -1499,6 +1566,16 @@ def parse_manifest_suite_command(
             raise Phase0Error("Python suites cannot use compound shell commands")
         invocations = (
             _parse_python_invocation(root, module_root, segments[0], test_type),
+        )
+    elif executable == ".venv/bin/python" and module_id == "legacy-runtime-adapter":
+        if not diagnostic_workspace:
+            raise Phase0Error(
+                "legacy repository .venv suites are diagnostic-only until an independent runner is bound"
+            )
+        invocations = (
+            _parse_legacy_diagnostic_invocation(
+                root, module_root, suite_id, test_type, declared, segments
+            ),
         )
     elif executable == "bash":
         if len(segments) != 1 or len(segments[0]) != 3:
@@ -2129,7 +2206,17 @@ def execute_manifest_suite(root: Path, plan: TrustedSuitePlan, timeout_seconds: 
     final_kind: Optional[TrustedInvocation] = None
     final_test_output = ""
     failed_restore = False
+    legacy_diagnostic = (
+        plan.module_id == "legacy-runtime-adapter"
+        and plan.suite_id in LEGACY_DIAGNOSTIC_SUITES
+        and plan.declared_command == LEGACY_DIAGNOSTIC_SUITES[plan.suite_id][1]
+    )
+    raw_combined_output = ""
     with _trusted_test_environment_scope(plan.environment) as environment:
+        if legacy_diagnostic and plan.suite_id == "legacy-runtime-adapter.static":
+            anchor = os.environ.get("DPS_LEGACY_BASELINE_ANCHOR")
+            if anchor:
+                environment["DPS_LEGACY_BASELINE_ANCHOR"] = anchor
         for index, invocation in enumerate(plan.invocations):
             effective.extend((["&&"] if effective else []) + list(invocation.argv))
             result = run_command(
@@ -2138,6 +2225,8 @@ def execute_manifest_suite(root: Path, plan: TrustedSuitePlan, timeout_seconds: 
                 timeout_seconds=timeout_seconds,
                 env=environment,
             )
+            if legacy_diagnostic:
+                raw_combined_output = result.output
             combined_output.append(
                 "--- trusted segment {0}: {1} ---\n{2}".format(
                     index + 1, invocation.kind, result.output
@@ -2161,6 +2250,15 @@ def execute_manifest_suite(root: Path, plan: TrustedSuitePlan, timeout_seconds: 
         "effective_command": effective,
         "executed_tests": 0,
     }
+    if legacy_diagnostic:
+        interpreter = Path(plan.invocations[0].argv[0]).resolve(strict=True)
+        details.update(
+            interpreter_sha256=sha256_file(interpreter),
+            effective_environment=dict(sorted(environment.items())),
+            raw_combined_output=raw_combined_output,
+            raw_combined_output_sha256=sha256_text(raw_combined_output),
+            formal_evidence_eligible=False,
+        )
     status = "PASS"
     if failed_restore and _restore_failure_is_infrastructure(final_exit, output):
         status = "INFRA_ERROR"
@@ -2175,6 +2273,13 @@ def execute_manifest_suite(root: Path, plan: TrustedSuitePlan, timeout_seconds: 
         details["executed_tests"] = 0
     else:
         count, reason = _executed_test_count(final_kind, final_test_output)
+        if (
+            legacy_diagnostic
+            and final_kind.kind == "python-unittest"
+            and reason is None
+            and final_test_output.splitlines()[0] != "." * count
+        ):
+            reason = "legacy unittest output lacks the exact per-test progress line"
         details["executed_tests"] = count
         details["minimum_tests"] = final_kind.minimum_tests
         if reason:
@@ -2212,7 +2317,9 @@ def _module_test_failure(module_id: str, suffix: str, message: str) -> Dict[str,
     )
 
 
-def run_required_module_static_tests(root: Path, timeout_seconds: int = 300) -> List[Dict[str, Any]]:
+def run_required_module_static_tests(
+    root: Path, timeout_seconds: int = 300, diagnostic_workspace: bool = False
+) -> List[Dict[str, Any]]:
     checks: List[Dict[str, Any]] = []
     try:
         module_roots = discover_registered_module_dirs(root)
@@ -2279,7 +2386,10 @@ def run_required_module_static_tests(root: Path, timeout_seconds: int = 300) -> 
         for suite in required:
             suite_id = str(suite.get("id", "invalid-suite"))
             try:
-                plan = parse_manifest_suite_command(root, module_root, module_id, suite)
+                plan = parse_manifest_suite_command(
+                    root, module_root, module_id, suite,
+                    diagnostic_workspace=diagnostic_workspace,
+                )
             except Phase0Error as exc:
                 checks.append(_module_test_failure(module_id, suite_id, str(exc)))
                 continue
@@ -2512,7 +2622,11 @@ def _run_phase0_gate(
     checks.append(run_phase0_unittests())
     checks.append(run_external_gate_unittests())
     checks.append(run_locked_solution_build(ROOT))
-    checks.extend(run_required_module_static_tests(ROOT))
+    checks.extend(
+        run_required_module_static_tests(
+            ROOT, diagnostic_workspace=bool(arguments.diagnostic_workspace)
+        )
+    )
 
     node_executable = environment.get("node_executable")
     if isinstance(node_executable, str):
