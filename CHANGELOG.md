@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### SessionRunner strangler test fixture
+
+- Exercise the static verifier against an independent temporary Git clone and a test-only synthetic external anchor bound to its real legacy history, repair sets, protected files, and test floors. Keep the four semantic rejection cases visible after anchor validation, and check frozen-anchor tampering plus the real no-anchor CLI exit.
+- This fixture does not issue a trusted provider anchor or Windows, device, or formal verification evidence. The production verifier, legacy bytes, required suites, and release boundary remain unchanged.
+
 ### Phase 0 repository-static contract dispatch
 
 - Run required `contract` suites declared at `REPOSITORY_STATIC_VERIFIED` through the existing trusted Phase 0 suite executor. Keep the parser default, static evidence ceiling, command validation, required checks, and formal issuance boundaries unchanged.
