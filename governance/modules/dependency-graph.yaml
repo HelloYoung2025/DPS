@@ -62,7 +62,7 @@
     {
       "consumer": "command-orchestrator",
       "provider": "policy-approval",
-      "reason": "independent versioned P-256 execution-authorization signing port; command owns and constructs the v1 envelope while Policy Approval alone signs it"
+      "reason": "independent versioned P-256 execution-authorization signing port; Policy owns the pure v1 assets; Command constructs the wire envelope and consumes the existing signer port, whose production provider remains pending"
     },
     {
       "consumer": "control-plane-host",
@@ -127,7 +127,7 @@
     {
       "consumer": "executor-gateway",
       "provider": "policy-approval",
-      "reason": "owner of the approval fence and durable submission intent, acknowledgement, and state lifecycle"
+      "reason": "owner of execution authorization pure assets, the approval fence and durable submission intent, acknowledgement, and state lifecycle"
     },
     {
       "consumer": "factory-artifact-builder",

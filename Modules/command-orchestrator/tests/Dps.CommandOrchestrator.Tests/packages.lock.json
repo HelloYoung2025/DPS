@@ -182,15 +182,21 @@
       "dps.commandorchestrator": {
         "type": "Project",
         "dependencies": {
-          "Dps.CommandOrchestrator.Contracts": "[0.1.0, )",
+          "Dps.CommandOrchestrator.Contracts": "[0.2.0, )",
           "Dps.OperationCompiler.Contracts": "[0.1.0, )",
           "Npgsql": "[10.0.3, )"
         }
       },
       "dps.commandorchestrator.contracts": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Dps.PolicyApproval.Contracts": "[0.6.0, )"
+        }
       },
       "dps.operationcompiler.contracts": {
+        "type": "Project"
+      },
+      "dps.policyapproval.contracts": {
         "type": "Project"
       }
     }

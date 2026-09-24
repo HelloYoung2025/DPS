@@ -10,6 +10,11 @@
     <InternalsVisibleTo Include="Dps.PolicyApproval.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="../execution.authorization.v1.schema.json" Pack="true" PackagePath="contracts" />
+    <None Include="../execution.authorization.v1.canonical.md" Pack="true" PackagePath="contracts" />
+    <None Include="../execution.authorization.v1.canonical.json" Pack="true" PackagePath="contracts" />
+    <EmbeddedResource Include="../execution.authorization.v1.schema.json" LogicalName="Dps.PolicyApproval.Contracts.execution.authorization.v1.schema.json" />
+    <EmbeddedResource Include="../execution.authorization.v1.canonical.json" LogicalName="Dps.PolicyApproval.Contracts.execution.authorization.v1.canonical.json" />
     <None Include="../approval.decision.v1.schema.json" Pack="true" PackagePath="contracts" />
     <None Include="../approval.decision.v1.corpus.json" Pack="true" PackagePath="contracts" />
     <None Include="../approval.execution.fence.v1.schema.json" Pack="true" PackagePath="contracts" />

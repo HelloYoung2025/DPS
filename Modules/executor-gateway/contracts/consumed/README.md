@@ -1,7 +1,7 @@
 # Consumed contracts
 
 - `command.dispatch/v1`, owned by `command-orchestrator`.
-- `execution.authorization/v1`, owned by `command-orchestrator`; its canonical domain, digest, algorithm, and signature format are fixed and unknown variants fail closed.
+- `execution.authorization/v1`, owned by `policy-approval` and produced by `command-orchestrator`; its canonical domain, digest, algorithm, and signature format are fixed and unknown variants fail closed.
 - `approval.execution.fence/v1`, owned by `policy-approval`; a trusted constructor-bound adapter acquires its exact request and short-lived lease, which the gateway revalidates immediately before the durable PENDING transition.
 - `approval.submission.intent/v1`, `approval.submission.acknowledgement/v1`, and `approval.submission.state/v1`, owned by `policy-approval`; they are the only public submission lifecycle. Executor Gateway does not publish a parallel pending/acknowledged contract.
 - `command.receipt/v1`, owned by `command-orchestrator`; Executor Gateway emits compliant receipts without owning the protocol.

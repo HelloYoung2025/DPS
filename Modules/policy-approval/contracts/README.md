@@ -1,5 +1,11 @@
 # Policy Approval contracts
 
+## Existing execution-authorization assets
+
+Policy.Contracts uniquely defines `execution.authorization/v1`, its existing payload guard and `ExecutionAuthorizationCanonicalV1`, and packages/embeds its [schema](provided/execution.authorization.v1.schema.json) and [machine canonical specification](provided/execution.authorization.v1.canonical.json). Those two JSON assets retain their original bytes and all existing v1 validation/canonical semantics. The DTO retains the historical `Dps.CommandOrchestrator.Contracts` namespace for source compatibility; the compiled definition belongs only to Policy.Contracts. Old binary compatibility is not claimed. Command.Contracts references Policy.Contracts and forwards authorization canonical calls; Policy references neither Command nor Compiler. Command still owns dispatch, its digest and leases, and remains the wire producer.
+
+Policy declares the same active major as both provider and receiver consumer for the existing Command request/return boundary. The signed return preserves the Command producer. These declarations do not implement a signer: the old Command consumer `SignAsync(ExecutionAuthorizationV1)` port remains. Typed requests, strict codecs/corpora, durable provenance, authoritative signing and authenticated Host composition remain separate P04/P08 work. Existing fail-closed runtime, quarantine and release-ineligible status are unchanged.
+
 ## Native execution ownership boundary (0.6.0)
 
 Policy Approval product and contract artifacts contain, compile, embed, and package no `native.stop.*` DTO, Schema, Corpus, codec, or verifier. Executor Gateway remains the unique owner of the registered native-stop contract. Policy may consume only an exact signed owner artifact after a future dependency/compatibility declaration and independent activation review; until then there is no Policy-local fallback contract source. The separate test artifact may copy the unregistered `004` SQL design and exercise its proposed parser only under `Category=ProposedDesign`; that code is absent from the product artifact and is not current contract, migration, or Integration evidence.

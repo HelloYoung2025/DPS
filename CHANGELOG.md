@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P04 existing authorization v1 assets
+
+- Move the sole execution-authorization DTO, original payload validation and authorization canonicalizer into Policy.Contracts, with byte-preserved schema and machine canonical JSON. Command retains wire production, dispatch/hash/lease ownership and its existing signer consumer port; its old canonical entry forwards through a one-way package reference. The historical DTO namespace preserves source usage, without claiming old binary compatibility.
+- Rebind Command/Gateway consumers, Policy provider/receiver declarations, reciprocal signing relay and generated governance. Required suites, active/quarantine modes and proposed/release-ineligible runtime state remain unchanged. Typed signing, strict codec/corpus, durable provenance, production Policy/Host composition and wider P04/P08 acceptance remain separate work; no signing activation or formal verification level is issued.
+
 ### Proposed P04 authorization contract ownership
 
 - Clarify that the proposed Policy-owned signing request declares Policy as both schema provider and receiver consumer at the same major/mode, with Command retained as producer/consumer on a direct reciprocal authenticated edge; no reverse dependency or producer relay flag is introduced.

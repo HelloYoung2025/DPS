@@ -11,6 +11,42 @@ public sealed class ExecutionAuthorizationContractTests
 {
     [Fact]
     [Trait("Category", "Contract")]
+    public void AuthorizationDefinitionAndResourcesHaveOnePolicyOwnerWithoutReverseDependency()
+    {
+        var owner = typeof(ExecutionAuthorizationV1).Assembly;
+        var command = typeof(CommandDispatchV1).Assembly;
+        Assert.Equal("Dps.PolicyApproval.Contracts", owner.GetName().Name);
+        Assert.NotEqual(command, owner);
+        Assert.Single(owner.GetExportedTypes(), type => type.FullName == typeof(ExecutionAuthorizationV1).FullName);
+        Assert.DoesNotContain(command.GetExportedTypes(), type => type.FullName == typeof(ExecutionAuthorizationV1).FullName);
+        Assert.DoesNotContain(owner.GetReferencedAssemblies(), assembly =>
+            assembly.Name!.StartsWith("Dps.CommandOrchestrator", StringComparison.Ordinal) ||
+            assembly.Name.StartsWith("Dps.OperationCompiler", StringComparison.Ordinal));
+        Assert.Contains("Dps.PolicyApproval.Contracts.execution.authorization.v1.schema.json", owner.GetManifestResourceNames());
+        Assert.Contains("Dps.PolicyApproval.Contracts.execution.authorization.v1.canonical.json", owner.GetManifestResourceNames());
+        Assert.DoesNotContain(command.GetManifestResourceNames(), resource => resource.Contains("execution.authorization", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("1.0")]
+    [InlineData("1.0.0")]
+    [InlineData("1.99.02")]
+    [Trait("Category", "Contract")]
+    public void HistoricalMajorOneAcceptanceAndCommandForwarderRemainUnchanged(string version)
+    {
+        var authorization = Authorization(Command()) with { SchemaVersion = version };
+        authorization.Validate();
+        Assert.Equal(
+            Dps.PolicyApproval.Contracts.ExecutionAuthorizationCanonicalV1.CanonicalAuthorizationBytes(authorization),
+            ExecutionAuthorizationProtocolV1.CanonicalAuthorizationBytes(authorization));
+        Assert.Equal(
+            Dps.PolicyApproval.Contracts.ExecutionAuthorizationCanonicalV1.ComputeAuthorizationSha256(authorization),
+            ExecutionAuthorizationProtocolV1.ComputeAuthorizationSha256(authorization));
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
     public void PolicySignerPortIsVersionedKeyBoundAndRawIssuedAuthorizationEntryPointIsNotPublic()
     {
         Assert.Equal(
@@ -145,7 +181,7 @@ public sealed class ExecutionAuthorizationContractTests
     [Trait("Category", "Contract")]
     public void MachineCanonicalSpecGoldenBytesDigestAndSignatureAreCrossLanguageStable()
     {
-        using var spec = ReadEmbeddedJson("Dps.CommandOrchestrator.Contracts.execution.authorization.v1.canonical.json");
+        using var spec = ReadEmbeddedJson("Dps.PolicyApproval.Contracts.execution.authorization.v1.canonical.json");
         var golden = spec.RootElement.GetProperty("goldenVector");
         var command = Command();
         var authorization = Authorization(command) with { SignatureBase64 = golden.GetProperty("signatureBase64").GetString()! };
@@ -172,10 +208,10 @@ public sealed class ExecutionAuthorizationContractTests
         }
         finally { CryptographicOperations.ZeroMemory(commandBytes); CryptographicOperations.ZeroMemory(authorizationBytes); }
 
-        using var schema = ReadEmbeddedJson("Dps.CommandOrchestrator.Contracts.execution.authorization.v1.schema.json");
+        using var schema = ReadEmbeddedJson("Dps.PolicyApproval.Contracts.execution.authorization.v1.schema.json");
         var binding = schema.RootElement.GetProperty("x-dps-canonical-spec");
         Assert.Equal("execution.authorization.v1.canonical.json", binding.GetProperty("resource").GetString());
-        var canonicalSpecBytes = ReadEmbeddedBytes("Dps.CommandOrchestrator.Contracts.execution.authorization.v1.canonical.json");
+        var canonicalSpecBytes = ReadEmbeddedBytes("Dps.PolicyApproval.Contracts.execution.authorization.v1.canonical.json");
         try { Assert.Equal(binding.GetProperty("sha256").GetString(), Convert.ToHexStringLower(SHA256.HashData(canonicalSpecBytes))); }
         finally { CryptographicOperations.ZeroMemory(canonicalSpecBytes); }
     }
@@ -184,7 +220,7 @@ public sealed class ExecutionAuthorizationContractTests
     [Trait("Category", "Contract")]
     public void SignedReceiptSchemaRequiresAndConstrainsThePublicEnvelopeScope()
     {
-        using var schema = ReadEmbeddedJson("Dps.CommandOrchestrator.Contracts.command.receipt.signed.v1.schema.json");
+        using var schema = ReadEmbeddedJson("Dps.CommandOrchestrator.Contracts.command.receipt.signed.v1.schema.json", typeof(SignedCommandReceiptV1).Assembly);
         var root = schema.RootElement;
         Assert.False(root.GetProperty("additionalProperties").GetBoolean());
         var required = root.GetProperty("required").EnumerateArray().Select(value => value.GetString()!).ToHashSet(StringComparer.Ordinal);

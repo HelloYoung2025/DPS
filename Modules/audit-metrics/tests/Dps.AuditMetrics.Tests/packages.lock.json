@@ -40,6 +40,11 @@
         "resolved": "6.0.0",
         "contentHash": "UcSjPsst+DfAdJGVDsu346FX0ci0ah+lw3WRtn18NUwEqRt70HaOQ7lI72vy3+1LxtqI3T5GWwV39rQSrCzAeg=="
       },
+      "Microsoft.CodeCoverage": {
+        "type": "Transitive",
+        "resolved": "18.7.0",
+        "contentHash": "+wFfx9s7D9wegM0RziXMj2kvYDT4qcqXXtyjiQwSZOGQ2wwcOAJQcD6eQXk02jt0MvRNawtp8TJxTrV+wD8X1g=="
+      },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
         "resolved": "10.0.0",
@@ -52,11 +57,6 @@
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
         }
-      },
-      "Microsoft.CodeCoverage": {
-        "type": "Transitive",
-        "resolved": "18.7.0",
-        "contentHash": "+wFfx9s7D9wegM0RziXMj2kvYDT4qcqXXtyjiQwSZOGQ2wwcOAJQcD6eQXk02jt0MvRNawtp8TJxTrV+wD8X1g=="
       },
       "Microsoft.Testing.Extensions.Telemetry": {
         "type": "Transitive",
@@ -183,7 +183,7 @@
         "type": "Project",
         "dependencies": {
           "Dps.AuditMetrics.Contracts": "[0.1.0, )",
-          "Dps.CommandOrchestrator.Contracts": "[0.1.0, )",
+          "Dps.CommandOrchestrator.Contracts": "[0.2.0, )",
           "Npgsql": "[10.0.3, )"
         }
       },
@@ -191,6 +191,12 @@
         "type": "Project"
       },
       "dps.commandorchestrator.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "Dps.PolicyApproval.Contracts": "[0.6.0, )"
+        }
+      },
+      "dps.policyapproval.contracts": {
         "type": "Project"
       }
     }

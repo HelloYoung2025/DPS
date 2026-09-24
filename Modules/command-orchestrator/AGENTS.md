@@ -18,7 +18,7 @@ Read root `AGENTS.md`, this file, `module.yaml`, every provided/consumed contrac
 
 ## Communication and boundaries
 
-Use only the declared `operation.compiled/v1`, `command.dispatch/v1`, `execution.authorization/v1`, and `command.receipt/v1` boundaries. The orchestrator uniquely owns the command and execution-authorization protocol so the executor can verify and emit protocol messages without creating a contract dependency cycle. Never read another module's tables, import internal types, share mutable static state, or turn model text into a command.
+Use only the declared `operation.compiled/v1`, `command.dispatch/v1`, `execution.authorization/v1`, and `command.receipt/v1` boundaries. The orchestrator owns dispatch/receipt and the command digest. Policy Approval uniquely owns the execution-authorization DTO, schema and authorization canonicalizer; Command.Contracts references Policy.Contracts in one direction only. The historical DTO namespace is source compatibility, not Command ownership or old binary compatibility. Never read another module's tables, import internal types, share mutable static state, or turn model text into a command.
 
 ## Invariants
 
@@ -31,7 +31,7 @@ Use only the declared `operation.compiled/v1`, `command.dispatch/v1`, `execution
 - `UNKNOWN_OUTCOME` is never blindly retried.
 - Out-of-order, forged, cross-scope, unknown-major, unknown-step, expired-lease, and over-attempt inputs fail closed.
 - `execution.authorization/v1` uses its fixed domain, canonical byte encoding, P-256/SHA-256 algorithm, IEEE P1363 signature format, and exact Release BOM digest. Unknown algorithms or formats are not negotiated.
-- Command Orchestrator constructs and remains the wire producer/contract owner of `execution.authorization/v1`; only the exact versioned `policy-approval` signer port may add its signature. The signer port protocol, module, key ID, returned canonical bytes, and signature are verified locally before relay. Never change the v1 producer to disguise the signer.
+- Command Orchestrator constructs and remains the wire producer of the Policy-owned `execution.authorization/v1`; only the exact versioned `policy-approval` signer port may add its signature. The signer port protocol, module, key ID, returned canonical bytes, and signature are verified locally before relay. Never change the v1 producer to disguise the signer.
 - Lease acquisition, binding, dispatch validity, and expiry recovery use PostgreSQL `clock_timestamp()` only after their command lock is held. Caller time is never an authority input.
 - Every dispatch preserves the authoritative `approval_sha256`; the command digest and signed execution authorization bind it. Empty, substituted, or legacy approval digests fail closed.
 - Execution authorization also binds the exact active-BOM generation and SHA-256 of its supervisor-issued opaque execution token. It never carries the raw token.
