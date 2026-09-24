@@ -52,6 +52,7 @@ EXPECTED_CONTRACT_FLOORS = {
     "soul-memory-adapter.schema-corpus": 3,
     "soul-memory-adapter.contract": 5,
     "soul-registry.contract": 7,
+    "soul-registry.schema-corpus": 6,
     "windows-edge-supervisor.contract": 13,
     "windows-edge-supervisor.contract-schema": 7,
     "windows-edge-worker.contract": 9,
