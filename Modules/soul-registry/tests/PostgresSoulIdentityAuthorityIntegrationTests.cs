@@ -116,6 +116,47 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
     }
 
     [Fact, Trait("Category", "Integration")]
+    public async Task ReplayRejectsAnotherTenantsValidSignedProofInItsRow()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var request = rig.Issue("owner@example.test", "create");
+        _ = await rig.Authority.VerifyAliasAsync(request, TestContext.Current.CancellationToken);
+        var other = rig.Issue("other@example.test", "create", tenant: "tenant_" + Rig.Hash("other"));
+        var otherProof = await rig.Authority.VerifyAliasAsync(other, TestContext.Current.CancellationToken);
+        await rig.ReplaceProofWireAsync(request, otherProof.ToUtf8Json());
+
+        await Assert.ThrowsAsync<SoulRegistryException>(() => rig.Authority.VerifyAliasAsync(
+            request, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await rig.CountAsync("identity_authority_receipts"));
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task ReplayRejectsStoredProofIdMismatch()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var request = rig.Issue("proof-id@example.test", "create");
+        var proof = await rig.Authority.VerifyAliasAsync(request, TestContext.Current.CancellationToken);
+        await rig.ReplaceProofIdAsync(proof.ProofId, Guid.NewGuid());
+
+        await Assert.ThrowsAsync<SoulRegistryException>(() => rig.Authority.VerifyAliasAsync(
+            request, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await rig.CountAsync("identity_authority_receipts"));
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task ReplayRejectsChangedStoredReferenceCommitment()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var request = rig.Issue("reference@example.test", "create");
+        var proof = await rig.Authority.VerifyAliasAsync(request, TestContext.Current.CancellationToken);
+        await rig.TamperReferencesAsync(proof.ProofId);
+
+        await Assert.ThrowsAsync<SoulRegistryException>(() => rig.Authority.VerifyAliasAsync(
+            request, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await rig.CountAsync("identity_authority_receipts"));
+    }
+
+    [Fact, Trait("Category", "Integration")]
     public async Task PinnedTrustMetadataAndPersistedReferenceTamperingFailClosed()
     {
         await using var rig = await Rig.CreateAsync();
@@ -195,6 +236,30 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
         Assert.Equal(proof, await rig.Authority.VerifyAliasAsync(request,
             TestContext.Current.CancellationToken));
         Assert.Equal(1, await rig.CountAsync("identity_verifications"));
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task RealVerifyCommitAcknowledgementLossRejectsMismatchedReadback()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var other = rig.Issue("other-ack@example.test", "create");
+        var otherProof = await rig.Authority.VerifyAliasAsync(other, TestContext.Current.CancellationToken);
+        var request = rig.Issue("verify-mismatch@example.test", "create");
+        var rowChangedAfterCommit = false;
+        await using var proxy = new CommitAckDroppingProxy(rig.SocketPath, rig.Port, async () =>
+        {
+            await rig.ReplaceProofWireAsync(request, otherProof.ToUtf8Json());
+            rowChangedAfterCommit = true;
+        });
+        using var proxiedRegistry = rig.CreateRegistry(proxy.ConnectionString(rig.ConnectionString));
+        var proxiedAuthority = rig.CreateAuthority(proxiedRegistry);
+
+        await Assert.ThrowsAsync<SoulCommitUnknownException>(() => proxiedAuthority.VerifyAliasAsync(
+            request, TestContext.Current.CancellationToken));
+        Assert.True(rowChangedAfterCommit);
+        Assert.True(proxy.DroppedCommitAcknowledgement);
+        Assert.Equal(2, await rig.CountAsync("identity_verifications"));
+        Assert.Equal(0, await rig.CountAsync("identity_authority_receipts"));
     }
 
     [Fact, Trait("Category", "Integration")]
@@ -347,11 +412,11 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
         };
 
         internal SoulAliasVerificationRequestV1 Issue(string alias, string operation, string? target = null,
-            string? nonce = null, string? idem = null)
+            string? nonce = null, string? idem = null, string? tenant = null)
         {
             var request = new SoulAliasVerificationRequestV1
             {
-                RequestId = Guid.NewGuid(), TenantRef = "tenant_" + Hash("tenant"), Operation = operation,
+                RequestId = Guid.NewGuid(), TenantRef = tenant ?? "tenant_" + Hash("tenant"), Operation = operation,
                 AliasKind = "email", ProofRef = "proof_" + Hash(Guid.NewGuid().ToString("N")),
                 TargetSoulId = target, DeviceBindingId = "db_" + Hash("device")[..32],
                 PlatformAccountId = "pa_" + Hash("account")[..32], TraceId = "trace_" + Hash(Guid.NewGuid().ToString("N"))[..32],
@@ -387,6 +452,33 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
                 UPDATE {_schema}.identity_verifications SET alias_references = '[]'::jsonb
                 WHERE proof_id = @proof_id
                 """, connection);
+            command.Parameters.AddWithValue("proof_id", proofId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        internal async Task ReplaceProofWireAsync(SoulAliasVerificationRequestV1 request, byte[] proofWire)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand($"""
+                UPDATE {_schema}.identity_verifications SET proof_wire = @proof_wire
+                WHERE tenant_ref = @tenant AND nonce = @nonce
+                """, connection);
+            command.Parameters.AddWithValue("proof_wire", proofWire);
+            command.Parameters.AddWithValue("tenant", request.TenantRef);
+            command.Parameters.AddWithValue("nonce", request.Nonce);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        internal async Task ReplaceProofIdAsync(Guid proofId, Guid replacement)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand($"""
+                UPDATE {_schema}.identity_verifications SET proof_id = @replacement
+                WHERE proof_id = @proof_id
+                """, connection);
+            command.Parameters.AddWithValue("replacement", replacement);
             command.Parameters.AddWithValue("proof_id", proofId);
             Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
         }
@@ -487,6 +579,7 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
     {
         private readonly string _socketPath;
         private readonly int _postgresPort;
+        private readonly Func<Task>? _afterServerCommit;
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly ConcurrentBag<Task> _bridges = [];
@@ -495,9 +588,10 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
         private int _dropped;
         internal bool DroppedCommitAcknowledgement => Volatile.Read(ref _dropped) == 1;
 
-        internal CommitAckDroppingProxy(string socketPath, int postgresPort)
+        internal CommitAckDroppingProxy(string socketPath, int postgresPort, Func<Task>? afterServerCommit = null)
         {
             _socketPath = socketPath; _postgresPort = postgresPort;
+            _afterServerCommit = afterServerCommit;
             _listener.Start();
             _accept = AcceptAsync();
         }
@@ -556,6 +650,7 @@ public sealed class PostgresSoulIdentityAuthorityIntegrationTests
                             else if (Volatile.Read(ref sawCommit) == 1 &&
                                      Interlocked.CompareExchange(ref _dropNext, 0, 1) == 1)
                             {
+                                if (_afterServerCommit is not null) await _afterServerCommit();
                                 Volatile.Write(ref _dropped, 1);
                                 client.Close();
                                 break;

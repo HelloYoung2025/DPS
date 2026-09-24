@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05-R2 Soul proof replay binding
+
+- Check a persisted alias proof against the exact replay request, its verification row ID and metadata, and the owner's signed alias-reference commitment before either normal replay or uncertain-commit readback returns it. Inconsistent uncertain-commit readback remains `COMMIT_UNKNOWN`; valid same-request replay, signature and time checks remain in place.
+- Add real PostgreSQL regressions for a different valid signed proof in the row, changed row proof ID, changed reference commitment, and a changed row after a real COMMIT acknowledgement is dropped. This Soul-only repair does not activate a production issuer, public route, Binding composition or release.
+
 ### P05-R1 Soul-only local authority
 
 - Add an internal Soul Registry Verify/Apply decision core with synthetic test-owned signing input, an additive owner-state migration, nonce/idempotency receipts, signed all-key alias references and a Soul-only PostgreSQL advisory lease. Keep legacy aliases and receipts unchanged and untrusted for current identity; old writers must not run against new authority rows without a compatible guard.

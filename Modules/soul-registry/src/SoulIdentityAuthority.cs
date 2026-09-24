@@ -80,11 +80,7 @@ internal sealed class SoulIdentityAuthority : ISoulAliasClientV1
             request.Nonce, request.IdempotencyKey, cancellationToken);
         if (existing is not null)
         {
-            if (!SecretComparison.EqualsHex(existing.RequestSha256, requestSha) ||
-                existing.Nonce != request.Nonce || existing.IdempotencyKey != request.IdempotencyKey)
-                throw new IdempotencyConflictException();
-            var replay = SoulAliasVerificationV1.FromUtf8Json(existing.ProofWire);
-            ValidateProof(replay);
+            var replay = ValidateStoredVerification(existing, request, requestSha);
             await transaction.CommitAsync(cancellationToken);
             return replay;
         }
@@ -187,13 +183,7 @@ internal sealed class SoulIdentityAuthority : ISoulAliasClientV1
         }
         if (verification.ConsumedAt is not null)
             throw new IdempotencyConflictException();
-        var references = JsonSerializer.Deserialize<AliasReference[]>(verification.AliasReferences)
-            ?? throw new SoulRegistryException("The stored alias reference set is invalid.");
-        if (!_bindings.VerificationKey.VerifyData(
-                ReferenceCommitment(proof, JsonSerializer.Serialize(references)),
-                verification.ReferencesSignature, HashAlgorithmName.SHA256,
-                DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
-            throw new SoulRegistryException("The persisted alias keyring reference set was changed.");
+        var references = ValidateStoredReferences(verification, proof);
         if (references.Length != _registry.Options.AliasKeys.Count ||
             !references.Select(static item => item.KeyId).Order(StringComparer.Ordinal)
                 .SequenceEqual(_registry.Options.AliasKeys.Select(static key => key.KeyId).Order(StringComparer.Ordinal)) ||
@@ -278,6 +268,38 @@ internal sealed class SoulIdentityAuthority : ISoulAliasClientV1
                 Convert.FromBase64String(proof.SignatureBase64), HashAlgorithmName.SHA256,
                 DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
             throw new SoulRegistryException("The alias authority proof failed fixed trust verification.");
+    }
+
+    private SoulAliasVerificationV1 ValidateStoredVerification(VerificationRow row,
+        SoulAliasVerificationRequestV1 request, string requestSha)
+    {
+        if (row.TenantRef != request.TenantRef || row.Nonce != request.Nonce ||
+            row.IdempotencyKey != request.IdempotencyKey ||
+            !SecretComparison.EqualsHex(row.RequestSha256, requestSha))
+            throw new IdempotencyConflictException();
+        var proof = SoulAliasVerificationV1.FromUtf8Json(row.ProofWire);
+        ValidateProof(proof);
+        try { proof.RequireMatches(request); }
+        catch (ArgumentException)
+        {
+            throw new SoulRegistryException("The stored alias proof does not bind this request.");
+        }
+        if (row.ProofId != proof.ProofId)
+            throw new SoulRegistryException("The stored alias proof ID does not match its row.");
+        _ = ValidateStoredReferences(row, proof);
+        return proof;
+    }
+
+    private AliasReference[] ValidateStoredReferences(VerificationRow row, SoulAliasVerificationV1 proof)
+    {
+        var references = JsonSerializer.Deserialize<AliasReference[]>(row.AliasReferences)
+            ?? throw new SoulRegistryException("The stored alias reference set is invalid.");
+        if (!_bindings.VerificationKey.VerifyData(
+                ReferenceCommitment(proof, JsonSerializer.Serialize(references)),
+                row.ReferencesSignature, HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+            throw new SoulRegistryException("The persisted alias keyring reference set was changed.");
+        return references;
     }
 
     private static bool IsDigest(string? value) => value is { Length: 64 } &&
@@ -585,11 +607,9 @@ internal sealed class SoulIdentityAuthority : ISoulAliasClientV1
             await LockIdempotencyAsync(connection, transaction, request.TenantRef, request.IdempotencyKey, timeout.Token);
             var row = await ReadVerificationAsync(connection, transaction, request.TenantRef,
                 request.Nonce, request.IdempotencyKey, timeout.Token);
-            if (row is not null && row.Nonce == request.Nonce && row.IdempotencyKey == request.IdempotencyKey &&
-                SecretComparison.EqualsHex(row.RequestSha256, requestSha))
+            if (row is not null)
             {
-                var proof = SoulAliasVerificationV1.FromUtf8Json(row.ProofWire);
-                ValidateProof(proof);
+                var proof = ValidateStoredVerification(row, request, requestSha);
                 await transaction.CommitAsync(timeout.Token);
                 return proof;
             }

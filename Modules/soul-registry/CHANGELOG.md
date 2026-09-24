@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bind normal alias-proof replay and uncertain-commit readback to the exact request, persisted verification row and signed alias-reference set. Mismatches cannot return a valid proof belonging to another request; uncertain readback stays `COMMIT_UNKNOWN`. Real PostgreSQL negative tests exercise row corruption only after the normal Verify path writes the row. No public contract, migration or production route changes.
+
 - Add an internal, test-composed Soul-only Verify/Apply core, additive 003 authority-state migration, signed retained-key references, durable nonce/idempotency receipts and owner-current revision/lease. Real PostgreSQL tests include backend termination and a dropped COMMIT acknowledgement. Production issuer, Binding composition, public current route and P06/P11 handoff remain unavailable; no formal level is claimed.
 
 - Add proposed owner identity DTO/codecs, four closed schemas and shared synthetic corpus, plus current/alias port declarations and split legal wire versus legacy audit encoding. Add full corpus/commitment/schema tests; no production provider, key root, lease implementation or new consumer edge. Stage I implementation only; runtime tests and independent QA remain pending.
