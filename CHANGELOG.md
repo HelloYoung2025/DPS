@@ -4,6 +4,7 @@
 
 ### Proposed P04 authorization contract ownership
 
+- Clarify that the proposed Policy-owned signing request declares Policy as both schema provider and receiver consumer at the same major/mode, with Command retained as producer/consumer on a direct reciprocal authenticated edge; no reverse dependency or producer relay flag is introduced.
 - Document a proposed move of the unique `execution.authorization/v1` owner to Policy while Command retains wire production, CommandDispatch and its exact digest. Specify the pure authorization asset split, authenticated typed signing request, independent approval checks, relay/dependency direction, all wire and package consumers, migration order and rollback boundaries.
 - This is a two-document design slice only. Current Command ownership, manifests, v1 wire/canonical bytes, code, required checks and active/quarantine states remain unchanged. Actual public-asset migration and P08 provider/composition need separate work and existing P07/P04 prerequisites; no signing, activation, formal verification or wider P04 completion is claimed.
 
