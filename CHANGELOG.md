@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### Control Plane Host PostgreSQL catalog attestation
+
+- Rename the column-collation query alias so PostgreSQL 18.4 can parse runtime schema attestation without changing catalog, ACL, or runtime-role requirements.
+- Attest PostgreSQL 18.4 constraint inheritance by type: CHECK constraints remain inheritable, while foreign, primary, and unique keys remain non-inheritable; unknown kinds fail closed.
+- Require a successful healthy runtime attestation in each existing catalog/ACL tamper case before applying its mutation, so an unrelated earlier rejection cannot satisfy the negative assertion. Add a native CHECK NO INHERIT negative case with a test-only matching definition comment to isolate the inheritance check.
+
 ### Proposed P04 authorization contract ownership
 
 - Clarify that the proposed Policy-owned signing request declares Policy as both schema provider and receiver consumer at the same major/mode, with Command retained as producer/consumer on a direct reciprocal authenticated edge; no reverse dependency or producer relay flag is introduced.

@@ -526,6 +526,7 @@ public sealed class PostgresControlPlaneTruthStoreIntegrationTests
     [InlineData("trigger")]
     [InlineData("constraint")]
     [InlineData("constraint-parentheses")]
+    [InlineData("constraint-no-inherit")]
     [InlineData("function")]
     [InlineData("function-strict")]
     [InlineData("index")]
@@ -540,6 +541,7 @@ public sealed class PostgresControlPlaneTruthStoreIntegrationTests
         string tamper)
     {
         await using var database = await ControlPlaneTestDatabase.CreateAsync(TestCancellation);
+        Assert.Equal(0, await database.CreateStore().CountTruthAsync(TestCancellation));
         await database.TamperSchemaAsync(tamper, TestCancellation);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
@@ -1404,6 +1406,35 @@ public sealed class PostgresControlPlaneTruthStoreIntegrationTests
                     cancellationToken),
                 "constraint-parentheses" => ExecuteOwnerAsync(
                     WidenedAllowlistConstraintSql,
+                    cancellationToken),
+                "constraint-no-inherit" => ExecuteOwnerAsync(
+                    """
+                    ALTER TABLE provider_trust_states
+                        DROP CONSTRAINT provider_trust_revision_positive;
+                    ALTER TABLE provider_trust_states
+                        ADD CONSTRAINT provider_trust_revision_positive
+                        CHECK (revision > 0) NO INHERIT;
+                    DO $verify_no_inherit$
+                    DECLARE
+                        constraint_state record;
+                    BEGIN
+                        SELECT oid, contype, connoinherit,
+                               pg_catalog.pg_get_constraintdef(oid, false) AS definition
+                        INTO STRICT constraint_state
+                        FROM pg_catalog.pg_constraint
+                        WHERE conrelid = 'provider_trust_states'::regclass
+                          AND conname = 'provider_trust_revision_positive';
+                        IF constraint_state.contype <> 'c' OR NOT constraint_state.connoinherit THEN
+                            RAISE EXCEPTION 'NO INHERIT tamper fixture did not bind';
+                        END IF;
+                        -- Test-only matching baseline isolates the inheritance predicate.
+                        EXECUTE pg_catalog.format(
+                            'COMMENT ON CONSTRAINT provider_trust_revision_positive ON provider_trust_states IS %L',
+                            'dps.control-plane-host.constraint-definition-baseline/v1'
+                            || E'\n' || constraint_state.definition);
+                    END;
+                    $verify_no_inherit$;
+                    """,
                     cancellationToken),
                 "function" => ExecuteOwnerAsync(
                     """
