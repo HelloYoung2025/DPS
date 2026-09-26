@@ -634,22 +634,28 @@ public sealed class DurableHostTests
             Assert.Equal(LeaseRegressionTransport.ExpectedStatus(outcome), first.ResultStatus);
         }
         clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
-        using var reopened = DurableCommandStateStore.Open(runtime.Path);
-        await using var reopenedJournal = await OpenRealJournalAdapterAsync(runtime.Path, token);
-        var replacement = LeaseRegressionTransport.ForOutcome("success");
-        var tracked = new LeaseRegressionStore(reopened);
-        var processor = new CommandProcessor(replacement, reopenedJournal, tracked, clock);
-        var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
-        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
-        var stateBytes = File.ReadAllBytes(statePath);
-        var journalBytes = File.ReadAllBytes(journalPath);
-        var writes = tracked.Mutations;
-        var replay = await processor.ProcessAsync(command, token);
-        Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
-        Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
-        Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
-        Assert.Equal(writes, tracked.Mutations);
-        Assert.Equal(0, replacement.Calls);
+        for (var reopen = 0; reopen < 2; reopen++)
+        {
+            using var reopened = DurableCommandStateStore.Open(runtime.Path);
+            await using var reopenedJournal = await OpenRealJournalAdapterAsync(runtime.Path, token);
+            var replacement = LeaseRegressionTransport.ForOutcome("success");
+            var tracked = new LeaseRegressionStore(reopened);
+            var observed = new LeaseRegressionJournal(reopenedJournal, _ => Task.CompletedTask);
+            var processor = new CommandProcessor(replacement, observed, tracked, clock);
+            var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+            var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+            var stateBytes = File.ReadAllBytes(statePath);
+            var journalBytes = File.ReadAllBytes(journalPath);
+            var writes = tracked.Mutations;
+            var replay = await processor.ProcessAsync(command, token);
+            Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
+            Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+            Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
+            Assert.Equal(writes, tracked.Mutations);
+            Assert.Equal(0, replacement.Calls);
+            Assert.Equal(0, tracked.TryBegins);
+            Assert.Equal(0, observed.AppendCalls);
+        }
     }
 
     [Theory]
@@ -724,34 +730,301 @@ public sealed class DurableHostTests
         Assert.Equal(0, replacement.Calls);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "Integration")]
     [Trait("EvidenceKind", "SIMULATION")]
-    public async Task Expired_restart_after_possible_submission_preserves_unknown_without_redispatch()
+    public async Task Expired_restart_after_possible_submission_preserves_unknown_without_redispatch(bool acknowledged)
     {
         using var runtime = new TemporaryRuntimeDirectory();
         var command = WorkerTests.Command();
         var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
         var token = TestContext.Current.CancellationToken;
-        var interrupted = new LeaseRegressionTransport((_, _) =>
-            Task.FromException<NativeDispatchResult>(new IOException("interrupted after possible submission")));
+        var interrupted = new LeaseRegressionTransport((_, _) => acknowledged
+            ? Task.FromResult(new NativeDispatchResult(true, NativeStatus.Success, true, "ack persisted"))
+            : Task.FromException<NativeDispatchResult>(new IOException("interrupted after possible submission")));
         using (var store = DurableCommandStateStore.Open(runtime.Path))
         await using (var journal = await OpenRealJournalAdapterAsync(runtime.Path, token))
         {
-            await Assert.ThrowsAsync<IOException>(() => new CommandProcessor(interrupted, journal, store, clock)
+            var tracked = new LeaseRegressionStore(store, point =>
+            {
+                if (acknowledged && point == "MarkDispatchAcknowledged") throw new IOException("interrupted after persisted ACK");
+            });
+            await Assert.ThrowsAsync<IOException>(() => new CommandProcessor(interrupted, journal, tracked, clock)
                 .ProcessAsync(command, token));
             Assert.Equal(1, store.GetDrainSnapshot().UncertainCount);
         }
         Assert.Equal(1, interrupted.Calls);
         clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        CommandReceipt result;
+        using (var reopened = DurableCommandStateStore.Open(runtime.Path))
+        await using (var owner = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            var native = LeaseRegressionTransport.ForOutcome("success");
+            result = await new CommandProcessor(native, owner, reopened, clock).ProcessAsync(command, token);
+            Assert.Equal("UNKNOWN_OUTCOME", result.ResultStatus);
+            Assert.Equal(acknowledged ? true : (bool?)null, result.DispatchAcknowledged);
+            Assert.False(result.RetryAllowed);
+            Assert.Equal(0, native.Calls);
+        }
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        var journalBytes = File.ReadAllBytes(journalPath);
+        using var second = DurableCommandStateStore.Open(runtime.Path);
+        await using var secondJournal = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        var observed = new LeaseRegressionJournal(secondJournal, _ => Task.CompletedTask);
+        var replacement = LeaseRegressionTransport.ForOutcome("success");
+        var replayProcessor = new CommandProcessor(replacement, observed, second, clock);
+        var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+        var stateBytes = File.ReadAllBytes(statePath);
+        Assert.Equal(result with { Duplicate = true, RetryAllowed = false }, await replayProcessor.ProcessAsync(command, token));
+        Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+        Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
+        Assert.Equal(0, observed.AppendCalls);
+        Assert.Equal(0, replacement.Calls);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Durable_prepared_completion_has_one_active_owner(bool firstBatch, bool secondBatch, bool seedFailure)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        using var store = DurableCommandStateStore.Open(runtime.Path);
+        await ReviewFixRegressionTests.AssertPreparedOwnerAsync(store, firstBatch, secondBatch, seedFailure);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Durable_batch_releases_unprocessed_claims(bool failAppend)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        using var store = DurableCommandStateStore.Open(runtime.Path);
+        await ReviewFixRegressionTests.AssertBatchReleaseAsync(store, failAppend);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Durable_finalize_failure_is_retryable_in_same_process()
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        using var store = DurableCommandStateStore.Open(runtime.Path);
+        await ReviewFixRegressionTests.AssertFinalizeRetryAsync(store);
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("null")]
+    [InlineData("normal")]
+    [InlineData("limit")]
+    [InlineData("oversized")]
+    [InlineData("invalid-unicode")]
+    [InlineData("exception-true")]
+    [InlineData("exception-false")]
+    [InlineData("exception-null")]
+    [InlineData("retry-result")]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Detail_projection_preserves_durable_truth_through_reopen(string kind)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        var detail = kind switch
+        {
+            "empty" => "", "null" => null!, "normal" => "  verified 😀  ",
+            "limit" => new string('x', 4096), "invalid-unicode" => "\ud800", _ => new string('x', 4097)
+        };
+        var native = new LeaseRegressionTransport((_, _) =>
+        {
+            if (kind == "exception-true")
+            {
+                clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+                throw new TransportDispatchException(detail, true);
+            }
+            if (kind == "exception-false") throw new TransportDispatchException(detail, false);
+            if (kind == "exception-null") throw new TransportDispatchException(detail, null);
+            return Task.FromResult(new NativeDispatchResult(kind != "retry-result", NativeStatus.Success, true, detail));
+        });
+        CommandReceipt first;
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        await using (var owner = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            var journal = new LeaseRegressionJournal(owner, request =>
+            {
+                using var payload = JsonDocument.Parse(request.PayloadJson);
+                Assert.InRange(payload.RootElement.GetProperty("detail").GetString()!.Length, 1, 4096);
+                return Task.CompletedTask;
+            });
+            first = await new CommandProcessor(native, journal, store, clock).ProcessAsync(command, token);
+            Assert.Equal(kind is "exception-true" or "exception-null" ? "UNKNOWN_OUTCOME" :
+                kind is "exception-false" or "retry-result" ? "FAILED" : "VERIFIED_SUCCESS", first.ResultStatus);
+            Assert.Equal(kind == "exception-null" ? (bool?)null : kind is not ("exception-false" or "retry-result"), first.DispatchAcknowledged);
+            Assert.False(first.RetryAllowed);
+            Assert.True(store.GetDrainSnapshot().IsDrained);
+            if (kind is "normal" or "limit") Assert.Equal(detail, first.Detail);
+            Assert.Equal(kind is "exception-false" or "retry-result" ? 2 : 1, native.Calls);
+            var epoch = store.BeginProcessEpoch();
+            Assert.Equal(native.Calls, store.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, epoch)!.DispatchAttemptCount);
+        }
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        var journalBytes = File.ReadAllBytes(journalPath);
+        clock.Now = command.LeaseExpiresAt!.Value.AddDays(1);
+        for (var reopen = 0; reopen < 2; reopen++)
+        {
+            using var store = DurableCommandStateStore.Open(runtime.Path);
+            await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+            var journal = new LeaseRegressionJournal(owner, _ => Task.CompletedTask);
+            var replacement = LeaseRegressionTransport.ForOutcome("success");
+            var processor = new CommandProcessor(replacement, journal, store, clock);
+            var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+            var stateBytes = File.ReadAllBytes(statePath);
+            var replay = await processor.ProcessAsync(command, token);
+            Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
+            using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(command, replay, clock.Now));
+            Assert.Equal(replay.Detail, wire.RootElement.GetProperty("detail").GetString());
+            Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+            Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
+            Assert.Equal(0, journal.AppendCalls);
+            Assert.Equal(0, replacement.Calls);
+        }
+    }
+
+    [Theory]
+    [InlineData("reserved", 0)]
+    [InlineData("accepted", 0)]
+    [InlineData("attempt-expiry", 1)]
+    [InlineData("retry-result", 1)]
+    [InlineData("retry-exception", 1)]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Expired_old_epoch_is_read_only_and_consumed_attempts_survive_reclaim(string boundary, int attempts)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var token = TestContext.Current.CancellationToken;
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        {
+            if (boundary is "reserved" or "accepted")
+            {
+                var epoch = store.BeginProcessEpoch();
+                store.TryBegin(command.IdempotencyKey!, command.RequestSha256!, epoch);
+                if (boundary == "accepted") store.MarkAccepted(command.IdempotencyKey!, epoch);
+            }
+            else
+            {
+                var tracked = new LeaseRegressionStore(store, point =>
+                {
+                    if (boundary == "attempt-expiry" && point == "MarkTransportAttempted") clock.Now = command.LeaseExpiresAt!.Value;
+                });
+                var native = new LeaseRegressionTransport((_, _) =>
+                {
+                    clock.Now = command.LeaseExpiresAt!.Value;
+                    if (boundary == "retry-exception") throw new TransportDispatchException("not submitted", false);
+                    return Task.FromResult(new NativeDispatchResult(false, NativeStatus.Failed, false, "not submitted"));
+                });
+                var rejected = await new CommandProcessor(native, new InMemoryJournal(), tracked, clock).ProcessAsync(command, token);
+                Assert.Equal("REJECTED", rejected.ResultStatus);
+                Assert.Equal(boundary == "attempt-expiry" ? 0 : 1, native.Calls);
+            }
+        }
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
         using var reopened = DurableCommandStateStore.Open(runtime.Path);
-        await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
-        var native = LeaseRegressionTransport.ForOutcome("success");
-        var result = await new CommandProcessor(native, owner, reopened, clock).ProcessAsync(command, token);
-        Assert.Equal("UNKNOWN_OUTCOME", result.ResultStatus);
-        Assert.Null(result.DispatchAcknowledged);
-        Assert.False(result.RetryAllowed);
-        Assert.Equal(0, native.Calls);
+        var trackedStore = new LeaseRegressionStore(reopened);
+        var replacement = LeaseRegressionTransport.ForOutcome("success");
+        var journal = new LeaseRegressionJournal(new InMemoryJournal(), _ => Task.CompletedTask);
+        var processor = new CommandProcessor(replacement, journal, trackedStore, clock);
+        var path = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+        var before = File.ReadAllBytes(path);
+        var writes = trackedStore.Mutations;
+        Assert.Equal("REJECTED", (await processor.ProcessAsync(command, token)).ResultStatus);
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Equal(writes, trackedStore.Mutations);
+        Assert.Equal(0, trackedStore.TryBegins);
+        Assert.Equal(0, replacement.Calls);
+        Assert.Equal(0, journal.AppendCalls);
+        var nextEpoch = reopened.BeginProcessEpoch();
+        var state = reopened.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, nextEpoch)!;
+        Assert.Equal(attempts, state.DispatchAttemptCount);
+        Assert.Equal(attempts, reopened.TryBegin(command.IdempotencyKey!, command.RequestSha256!, nextEpoch).DispatchAttemptCount);
+        Assert.Equal(attempts, reopened.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, nextEpoch)!.DispatchAttemptCount);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Legacy_empty_prepared_write_replays_exact_bytes_and_only_projects_wire_detail()
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var command = WorkerTests.Command();
+        var token = TestContext.Current.CancellationToken;
+        var context = WorkerJournalContext.FromCommand(command);
+        const string payload = "{\"detail\":\"\",\"entry_type\":\"VERIFIED_SUCCESS\",\"schema_version\":\"1.0\"}";
+        var write = new WorkerJournalWrite($"worker:{command.IdempotencyKey}:TERMINAL", "VERIFIED_SUCCESS", "", payload, WorkerTestHash.Sha256(payload));
+        var receipt = new CommandReceipt(command.CommandId, command.IdempotencyKey, "VERIFIED_SUCCESS", true, NativeStatus.Success, true, false, false, "");
+        using (var store = DurableCommandStateStore.Open(runtime.Path))
+        await using (var journal = await OpenRealJournalAdapterAsync(runtime.Path, token))
+        {
+            var epoch = store.BeginProcessEpoch();
+            store.TryBegin(command.IdempotencyKey!, command.RequestSha256!, epoch);
+            store.MarkAccepted(command.IdempotencyKey!, epoch);
+            store.MarkTransportAttempted(command.IdempotencyKey!, epoch);
+            store.MarkDispatchAcknowledged(command.IdempotencyKey!, epoch);
+            store.PrepareCompletion(command.IdempotencyKey!, epoch, context, receipt, write);
+            await journal.AppendAsync(WorkerJournalAppendRequest.Create(context, write), token);
+        }
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        var original = File.ReadAllBytes(journalPath);
+        for (var reopen = 0; reopen < 2; reopen++)
+        {
+            using var store = DurableCommandStateStore.Open(runtime.Path);
+            await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+            var observed = new LeaseRegressionJournal(owner, request =>
+            {
+                Assert.Equal(write.EntryId, request.EntryId);
+                Assert.Equal(write.PayloadJson, request.PayloadJson);
+                Assert.Equal(write.PayloadSha256, request.PayloadSha256);
+                return Task.CompletedTask;
+            });
+            var native = LeaseRegressionTransport.ForOutcome("success");
+            var processor = new CommandProcessor(native, observed, store, new LeaseRegressionClock(command.LeaseExpiresAt!.Value.AddDays(1)));
+            var replay = await processor.ProcessAsync(command, token);
+            Assert.Equal("", replay.Detail);
+            using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(command, replay, command.LeaseExpiresAt.Value.AddDays(1)));
+            Assert.Equal("detail unavailable", wire.RootElement.GetProperty("detail").GetString());
+            Assert.Equal(reopen == 0 ? 1 : 0, observed.AppendCalls);
+            Assert.Equal(original, File.ReadAllBytes(journalPath));
+            Assert.Equal(0, native.Calls);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public void Durable_old_epoch_cleanup_cannot_release_new_completion_owner()
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        using var store = DurableCommandStateStore.Open(runtime.Path);
+        ReviewFixRegressionTests.AssertCompletionEpochFence(store);
     }
 
     private const string IdempotencyKey =

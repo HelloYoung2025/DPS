@@ -30,6 +30,7 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
 
     private readonly object _sync = new();
     private readonly Dictionary<string, State> _states = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeCompletionClaims = new(StringComparer.Ordinal);
     private readonly FileStream _writerLease;
     private readonly FileStream _stateStream;
     private readonly string _runtimeDirectory;
@@ -114,6 +115,7 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
             var next = checked(_processEpoch + 1);
             PersistEvent(new StateEventPayload("1.0", "PROCESS_EPOCH", next, null, null));
             _processEpoch = next;
+            _activeCompletionClaims.Clear();
             return next;
         }
     }
@@ -126,7 +128,7 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
             RequireCurrentProcessEpoch(processEpoch);
             ValidateIdempotencyAndHash(idempotencyKey, requestSha256);
             return _states.TryGetValue(idempotencyKey, out var existing)
-                ? DescribeExisting(existing, requestSha256, processEpoch)
+                ? DescribeExisting(idempotencyKey, existing, requestSha256, processEpoch)
                 : null;
         }
     }
@@ -157,18 +159,19 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
                 return new BeginResult("NEW", created.Phase, false, 0, null);
             }
 
-            var result = DescribeExisting(existing, requestSha256, processEpoch);
+            var result = DescribeExisting(idempotencyKey, existing, requestSha256, processEpoch);
             if (result.Status is "RECONCILE_COMPLETION" or "RESUME_PRE_DISPATCH" or "RECOVER_UNCERTAIN")
             {
                 var claimed = existing with { ClaimedProcessEpoch = processEpoch };
                 PersistState(idempotencyKey, claimed, processEpoch);
                 _states[idempotencyKey] = claimed;
+                if (result.Status == "RECONCILE_COMPLETION") _activeCompletionClaims.Add(idempotencyKey);
             }
             return result;
         }
     }
 
-    private static BeginResult DescribeExisting(State existing, string requestSha256, long processEpoch)
+    private BeginResult DescribeExisting(string idempotencyKey, State existing, string requestSha256, long processEpoch)
     {
         if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
             return new BeginResult("CONFLICT", existing.Phase, AcknowledgementFor(existing.Phase),
@@ -177,7 +180,8 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
         var status = existing.Phase switch
         {
             CommandExecutionPhase.Completed => "DUPLICATE",
-            CommandExecutionPhase.CompletionPrepared => "RECONCILE_COMPLETION",
+            CommandExecutionPhase.CompletionPrepared => _activeCompletionClaims.Contains(idempotencyKey)
+                ? "IN_PROGRESS" : "RECONCILE_COMPLETION",
             _ when existing.ClaimedProcessEpoch == processEpoch => "IN_PROGRESS",
             CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted => "RESUME_PRE_DISPATCH",
             _ => "RECOVER_UNCERTAIN"
@@ -267,6 +271,7 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
             ValidateState(idempotencyKey, next, processEpoch);
             PersistState(idempotencyKey, next, processEpoch);
             _states[idempotencyKey] = next;
+            _activeCompletionClaims.Add(idempotencyKey);
         }
     }
 
@@ -303,21 +308,39 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
             EnsureUsable();
             RequireCurrentProcessEpoch(processEpoch);
             var prepared = new List<PreparedCommandCompletion>();
-            foreach (var pair in _states.OrderBy(item => item.Key, StringComparer.Ordinal).ToArray())
+            try
             {
-                var state = pair.Value;
-                if (state.Phase != CommandExecutionPhase.CompletionPrepared)
-                    continue;
-                if (state.PreparedJournalContext is not { } context ||
-                    state.Receipt is not { } receipt ||
-                    state.PreparedTerminalWrite is not { } terminalWrite)
-                    throw new InvalidDataException("prepared completion is incomplete");
-                var claimed = state with { ClaimedProcessEpoch = processEpoch };
-                PersistState(pair.Key, claimed, processEpoch);
-                _states[pair.Key] = claimed;
-                prepared.Add(new PreparedCommandCompletion(pair.Key, context, receipt, terminalWrite));
+                foreach (var pair in _states.OrderBy(item => item.Key, StringComparer.Ordinal).ToArray())
+                {
+                    var state = pair.Value;
+                    if (state.Phase != CommandExecutionPhase.CompletionPrepared || _activeCompletionClaims.Contains(pair.Key))
+                        continue;
+                    if (state.PreparedJournalContext is not { } context ||
+                        state.Receipt is not { } receipt ||
+                        state.PreparedTerminalWrite is not { } terminalWrite)
+                        throw new InvalidDataException("prepared completion is incomplete");
+                    var claimed = state with { ClaimedProcessEpoch = processEpoch };
+                    PersistState(pair.Key, claimed, processEpoch);
+                    _states[pair.Key] = claimed;
+                    _activeCompletionClaims.Add(pair.Key);
+                    prepared.Add(new PreparedCommandCompletion(pair.Key, context, receipt, terminalWrite));
+                }
+            }
+            catch
+            {
+                foreach (var completion in prepared) _activeCompletionClaims.Remove(completion.IdempotencyKey);
+                throw;
             }
             return prepared;
+        }
+    }
+
+    public void ReleasePreparedCompletionClaim(string idempotencyKey, long processEpoch)
+    {
+        lock (_sync)
+        {
+            // Cleanup must not mask an I/O fault or release ownership from a newer epoch.
+            if (processEpoch == _processEpoch) _activeCompletionClaims.Remove(idempotencyKey);
         }
     }
 
@@ -688,11 +711,15 @@ public sealed class DurableCommandStateStore : IDurableCommandStateStore, IDispo
             context.CommandId is null || !ReceiptTruthIsValid(receipt))
             throw new InvalidDataException("durable completion receipt truth is invalid");
         ValidateCompletionTransition(completionSource, state.DispatchAttemptCount, receipt);
-        var expectedWrite = WorkerJournalWrite.Create(
-            context,
-            "TERMINAL",
+        // Validate stored bytes as originally prepared, including legacy empty detail.
+        // Normalization applies only when creating a new write or projecting a receipt wire.
+        var payload = WorkerJournalWrite.CreateCanonicalPayload(receipt.ResultStatus, receipt.Detail);
+        var expectedWrite = new WorkerJournalWrite(
+            $"worker:{context.IdempotencyKey}:TERMINAL",
             receipt.ResultStatus,
-            receipt.Detail);
+            receipt.Detail,
+            payload.Json,
+            payload.Sha256);
         if (write != expectedWrite)
             throw new InvalidDataException("durable terminal Journal write is not deterministic");
         if (state.TerminalJournalReceipt is { } terminalReceipt)

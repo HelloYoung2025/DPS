@@ -68,6 +68,8 @@ public interface ICommandStateStore
         long processEpoch,
         WorkerJournalAppendReceipt journalReceipt);
     IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long processEpoch);
+    // Process-local ownership only; release never changes durable completion facts.
+    void ReleasePreparedCompletionClaim(string idempotencyKey, long processEpoch);
     CommandDrainSnapshot GetDrainSnapshot();
 }
 
@@ -110,6 +112,26 @@ public sealed record WorkerJournalContext(
     }
 }
 
+internal static class WorkerDetail
+{
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
+    internal static string Normalize(string? detail)
+    {
+        if (string.IsNullOrEmpty(detail)) return "detail unavailable";
+        if (detail.Length > 4096) return "detail omitted: exceeds 4096 characters";
+        try
+        {
+            _ = StrictUtf8.GetByteCount(detail);
+            return detail;
+        }
+        catch (EncoderFallbackException)
+        {
+            return "detail omitted: invalid Unicode";
+        }
+    }
+}
+
 public sealed record WorkerJournalWrite(
     string EntryId,
     string EntryType,
@@ -135,13 +157,11 @@ public sealed record WorkerJournalWrite(
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventKey);
         ArgumentNullException.ThrowIfNull(entryType);
-        ArgumentNullException.ThrowIfNull(detail);
+        detail = WorkerDetail.Normalize(detail);
         if (!IsUpperToken(eventKey, 1, 64))
             throw new InvalidDataException("journal event key is invalid");
         if (!IsUpperToken(entryType, 3, 64))
             throw new InvalidDataException("journal entry type is invalid");
-        if (detail.Length > 4096)
-            throw new InvalidDataException("journal detail exceeds the worker contract limit");
 
         var entryId = $"worker:{context.IdempotencyKey}:{eventKey}";
         if (entryId.Length > 160)
@@ -350,11 +370,17 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, State> _states = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeCompletionClaims = new(StringComparer.Ordinal);
     private long _processEpoch;
 
     public long BeginProcessEpoch()
     {
-        lock (_sync) return checked(++_processEpoch);
+        lock (_sync)
+        {
+            var next = checked(_processEpoch + 1);
+            _activeCompletionClaims.Clear();
+            return _processEpoch = next;
+        }
     }
 
     public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch)
@@ -363,7 +389,7 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
         {
             RequireCurrentProcessEpoch(processEpoch);
             return _states.TryGetValue(idempotencyKey, out var existing)
-                ? DescribeExisting(existing, requestSha256, processEpoch)
+                ? DescribeExisting(idempotencyKey, existing, requestSha256, processEpoch)
                 : null;
         }
     }
@@ -379,16 +405,17 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
                 return new BeginResult("NEW", CommandExecutionPhase.Reserved, false, 0, null);
             }
 
-            var result = DescribeExisting(existing, requestSha256, processEpoch);
+            var result = DescribeExisting(idempotencyKey, existing, requestSha256, processEpoch);
             if (result.Status is "RECONCILE_COMPLETION" or "RESUME_PRE_DISPATCH" or "RECOVER_UNCERTAIN")
             {
                 existing.ClaimedProcessEpoch = processEpoch;
+                if (result.Status == "RECONCILE_COMPLETION") _activeCompletionClaims.Add(idempotencyKey);
             }
             return result;
         }
     }
 
-    private static BeginResult DescribeExisting(State existing, string requestSha256, long processEpoch)
+    private BeginResult DescribeExisting(string idempotencyKey, State existing, string requestSha256, long processEpoch)
     {
         if (!string.Equals(existing.RequestSha256, requestSha256, StringComparison.Ordinal))
             return new BeginResult("CONFLICT", existing.Phase, AcknowledgementFor(existing.Phase),
@@ -397,7 +424,8 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
         var status = existing.Phase switch
         {
             CommandExecutionPhase.Completed => "DUPLICATE",
-            CommandExecutionPhase.CompletionPrepared => "RECONCILE_COMPLETION",
+            CommandExecutionPhase.CompletionPrepared => _activeCompletionClaims.Contains(idempotencyKey)
+                ? "IN_PROGRESS" : "RECONCILE_COMPLETION",
             _ when existing.ClaimedProcessEpoch == processEpoch => "IN_PROGRESS",
             CommandExecutionPhase.Reserved or CommandExecutionPhase.Accepted => "RESUME_PRE_DISPATCH",
             _ => "RECOVER_UNCERTAIN"
@@ -458,6 +486,7 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
             state.Receipt = receipt;
             state.PreparedTerminalWrite = terminalWrite;
             state.Phase = CommandExecutionPhase.CompletionPrepared;
+            _activeCompletionClaims.Add(idempotencyKey);
         }
     }
 
@@ -488,17 +517,35 @@ public sealed class InMemoryCommandStateStore : ICommandStateStore
         {
             RequireCurrentProcessEpoch(processEpoch);
             var prepared = new List<PreparedCommandCompletion>();
-            foreach (var pair in _states)
+            try
             {
-                var state = pair.Value;
-                if (state.Phase != CommandExecutionPhase.CompletionPrepared) continue;
-                if (state.PreparedJournalContext is not { } context || state.Receipt is not { } receipt ||
-                    state.PreparedTerminalWrite is not { } terminalWrite)
-                    throw new InvalidDataException("prepared completion is incomplete");
-                state.ClaimedProcessEpoch = processEpoch;
-                prepared.Add(new PreparedCommandCompletion(pair.Key, context, receipt, terminalWrite));
+                foreach (var pair in _states)
+                {
+                    var state = pair.Value;
+                    if (state.Phase != CommandExecutionPhase.CompletionPrepared || _activeCompletionClaims.Contains(pair.Key)) continue;
+                    if (state.PreparedJournalContext is not { } context || state.Receipt is not { } receipt ||
+                        state.PreparedTerminalWrite is not { } terminalWrite)
+                        throw new InvalidDataException("prepared completion is incomplete");
+                    state.ClaimedProcessEpoch = processEpoch;
+                    _activeCompletionClaims.Add(pair.Key);
+                    prepared.Add(new PreparedCommandCompletion(pair.Key, context, receipt, terminalWrite));
+                }
+            }
+            catch
+            {
+                foreach (var completion in prepared) _activeCompletionClaims.Remove(completion.IdempotencyKey);
+                throw;
             }
             return prepared;
+        }
+    }
+
+    public void ReleasePreparedCompletionClaim(string idempotencyKey, long processEpoch)
+    {
+        lock (_sync)
+        {
+            // Cleanup must not mask an I/O fault or release ownership from a newer epoch.
+            if (processEpoch == _processEpoch) _activeCompletionClaims.Remove(idempotencyKey);
         }
     }
 
@@ -647,7 +694,7 @@ public sealed class CommandProcessor
                 return Rejected(command, "worker is draining");
             }
 
-            _inFlight++;
+            Interlocked.Increment(ref _inFlight);
         }
 
         try
@@ -675,6 +722,10 @@ public sealed class CommandProcessor
                 // This only claims recovery of existing facts, never a fresh native execution.
                 begin = _stateStore.TryBegin(idempotencyKey, actualHash, _processEpoch);
             }
+            if (begin.Status is not ("NEW" or "RESUME_PRE_DISPATCH" or "CONFLICT" or "IN_PROGRESS" or
+                "RECOVER_UNCERTAIN" or "RECONCILE_COMPLETION" or "DUPLICATE"))
+                throw new InvalidDataException("command state returned an unknown begin status");
+
             if (begin.Status == "CONFLICT")
             {
                 return new CommandReceipt(
@@ -684,7 +735,8 @@ public sealed class CommandProcessor
 
             if (begin.Status == "IN_PROGRESS")
             {
-                if (begin.Phase is CommandExecutionPhase.TransportAttempted or CommandExecutionPhase.DispatchAcknowledged)
+                if (begin.Phase is CommandExecutionPhase.TransportAttempted or CommandExecutionPhase.DispatchAcknowledged ||
+                    (begin.Phase == CommandExecutionPhase.CompletionPrepared && begin.DispatchAcknowledged != false))
                 {
                     return Unknown(
                         command,
@@ -717,14 +769,21 @@ public sealed class CommandProcessor
 
             if (begin.Status == "RECONCILE_COMPLETION")
             {
-                var preparedReceipt = begin.ExistingReceipt ??
-                    throw new InvalidDataException("prepared completion is missing its receipt");
-                var preparedWrite = begin.PreparedTerminalWrite ??
-                    throw new InvalidDataException("prepared completion is missing its terminal journal write");
-                var preparedContext = begin.PreparedJournalContext ??
-                    throw new InvalidDataException("prepared completion is missing its Journal context");
-                await FinalizePreparedCompletionAsync(preparedContext, preparedWrite).ConfigureAwait(false);
-                return preparedReceipt with { Duplicate = true, RetryAllowed = false };
+                try
+                {
+                    var preparedReceipt = begin.ExistingReceipt ??
+                        throw new InvalidDataException("prepared completion is missing its receipt");
+                    var preparedWrite = begin.PreparedTerminalWrite ??
+                        throw new InvalidDataException("prepared completion is missing its terminal journal write");
+                    var preparedContext = begin.PreparedJournalContext ??
+                        throw new InvalidDataException("prepared completion is missing its Journal context");
+                    await FinalizePreparedCompletionAsync(preparedContext, preparedWrite).ConfigureAwait(false);
+                    return preparedReceipt with { Duplicate = true, RetryAllowed = false };
+                }
+                finally
+                {
+                    _stateStore.ReleasePreparedCompletionClaim(idempotencyKey, _processEpoch);
+                }
             }
 
             if (begin.Status == "DUPLICATE")
@@ -872,22 +931,30 @@ public sealed class CommandProcessor
     {
         lock (_intakeSync)
         {
-            _inFlight++;
+            Interlocked.Increment(ref _inFlight);
         }
 
         try
         {
             var prepared = _stateStore.ClaimPreparedCompletions(_processEpoch);
-            var completed = 0;
-            foreach (var completion in prepared)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await FinalizePreparedCompletionAsync(
-                    completion.JournalContext,
-                    completion.TerminalWrite).ConfigureAwait(false);
-                completed++;
+                var completed = 0;
+                foreach (var completion in prepared)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await FinalizePreparedCompletionAsync(
+                        completion.JournalContext,
+                        completion.TerminalWrite).ConfigureAwait(false);
+                    completed++;
+                }
+                return completed;
             }
-            return completed;
+            finally
+            {
+                foreach (var completion in prepared)
+                    _stateStore.ReleasePreparedCompletionClaim(completion.IdempotencyKey, _processEpoch);
+            }
         }
         finally
         {
@@ -901,6 +968,7 @@ public sealed class CommandProcessor
     {
         var idempotencyKey = command.IdempotencyKey ??
             throw new InvalidDataException("idempotency_key is required for completion");
+        receipt = receipt with { Detail = WorkerDetail.Normalize(receipt.Detail) };
         var journalContext = WorkerJournalContext.FromCommand(command);
         var terminalWrite = WorkerJournalWrite.Create(
             journalContext,
@@ -913,8 +981,15 @@ public sealed class CommandProcessor
             journalContext,
             receipt,
             terminalWrite);
-        await FinalizePreparedCompletionAsync(journalContext, terminalWrite).ConfigureAwait(false);
-        return receipt;
+        try
+        {
+            await FinalizePreparedCompletionAsync(journalContext, terminalWrite).ConfigureAwait(false);
+            return receipt;
+        }
+        finally
+        {
+            _stateStore.ReleasePreparedCompletionClaim(idempotencyKey, _processEpoch);
+        }
     }
 
     private async Task FinalizePreparedCompletionAsync(

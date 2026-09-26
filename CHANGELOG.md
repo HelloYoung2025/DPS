@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P10 REVIEW-FIX-R1 completion concurrency and receipt boundary
+
+- Pair command/reconciliation admission counts with atomic exits; give normal and recovered prepared completions one process-local active owner, with failure/cancellation cleanup and epoch fencing in both stores. Preserve exact Journal replay and retry budgets.
+- Recompute receipt source hashes, fail closed on unknown store statuses, and project unusable diagnostic detail deterministically without changing native-result truth. Preserve historical prepared payload/hash bytes, including empty detail; project only outgoing receipt text.
+- Add memory/durable concurrency, retry/cancellation, drain-signing, byte-preserving reopen, attempt-budget and wire-boundary regressions. Keep the original 3e47 no-Manifest-change history and later P18-B floor integration intact; this repair changes neither manifests nor owner schemas, dependencies, locks or pins.
+- Independent QA, cumulative Candidate gate, Windows/device evidence, production activation and release remain separate requirements; development checks do not issue a formal verification level.
+
 ### P05 Soul-current bounded R2 repairs
 
 - Reject effective column INSERT/UPDATE/REFERENCES and table MAINTAIN in the shared provider/signer SELECT-only check, including PUBLIC grants; add 12 real PostgreSQL permission/revoke/recovery regressions through the actual Host chain.

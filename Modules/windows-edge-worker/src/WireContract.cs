@@ -93,6 +93,8 @@ public static class WorkerExchangeCodec
         ArgumentNullException.ThrowIfNull(receipt);
         var sourceError = WorkerCommandValidator.GetReceiptSourceError(sourceCommand);
         if (sourceError is not null) throw new InvalidDataException(sourceError);
+        if (!string.Equals(CommandHasher.Compute(sourceCommand), sourceCommand.RequestSha256, StringComparison.Ordinal))
+            throw new InvalidDataException("source command request_sha256 mismatch");
         if (receipt.CommandId != sourceCommand.CommandId || receipt.IdempotencyKey != sourceCommand.IdempotencyKey)
             throw new InvalidDataException("receipt identity does not match the source command");
 
@@ -125,7 +127,7 @@ public static class WorkerExchangeCodec
             receipt.ResultStatus,
             receipt.Duplicate,
             receipt.RetryAllowed,
-            receipt.Detail);
+            WorkerDetail.Normalize(receipt.Detail));
         var validation = WorkerCommandValidator.GetReceiptError(envelope);
         if (validation is not null) throw new InvalidDataException(validation);
         return Encode(envelope);

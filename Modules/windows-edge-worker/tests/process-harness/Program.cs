@@ -429,5 +429,6 @@ internal sealed class CrashWindowStateStore(
     public IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long processEpoch) =>
         inner.ClaimPreparedCompletions(processEpoch);
 
+    public void ReleasePreparedCompletionClaim(string key, long epoch) => inner.ReleasePreparedCompletionClaim(key, epoch);
     public CommandDrainSnapshot GetDrainSnapshot() => inner.GetDrainSnapshot();
 }
