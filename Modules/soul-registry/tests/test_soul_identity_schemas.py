@@ -134,5 +134,26 @@ class SoulCurrentInstallationSchemaTests(unittest.TestCase):
         self.assertNotIn("private_key", schema["properties"])
 
 
+class SoulCurrentFourRoleSchemaTests(unittest.TestCase):
+    def test_configuration_v2_shared_corpus(self):
+        self.check_family("soul.current.configuration.v2", 47)
+
+    def test_public_lease_session_shared_corpus(self):
+        self.check_family("soul.current.lease.session.v1", 121)
+
+    def check_family(self, family, floor):
+        corpus = load(PROVIDED.parent / "corpus" / (family + ".corpus.json"))
+        schema = load(PROVIDED / (family + ".schema.json"))
+        Draft202012Validator.check_schema(schema)
+        self.assertEqual(len(corpus["cases"]), floor)
+        self.assertEqual(corpus["inventory"], [c["id"] for c in corpus["cases"]])
+        validator = Draft202012Validator(schema, format_checker=CHECKER)
+        for case in corpus["cases"]:
+            if case["schema_expected"] is None:
+                continue
+            with self.subTest(case=case["id"]):
+                self.assertEqual(validator.is_valid(case["payload"]), case["schema_expected"])
+
+
 if __name__ == "__main__":
     unittest.main()

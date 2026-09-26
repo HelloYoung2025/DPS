@@ -6,6 +6,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Dps.SoulRegistry.csproj" />
-    <ProjectReference Include="../../../control-plane-host/src/Dps.ControlPlaneHost/Dps.ControlPlaneHost.csproj" />
   </ItemGroup>
 </Project>

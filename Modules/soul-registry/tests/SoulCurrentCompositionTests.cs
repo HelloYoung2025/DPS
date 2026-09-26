@@ -68,11 +68,11 @@ public sealed class SoulCurrentCompositionTests
     [Trait("Category", "Unit")]
     public void PublicFactoryHasNoCallerRootAndMissingProductionInstallationCloses()
     {
-        Assert.Empty(typeof(SoulCurrentComposition).GetConstructors());
-        Assert.Empty(typeof(SoulCurrentComposition).GetMethod(nameof(SoulCurrentComposition.CreateForHost))!.GetParameters());
+        Assert.Empty(typeof(SoulCurrentProviderService).GetConstructors());
+        Assert.Empty(typeof(SoulCurrentProviderService).GetMethod(nameof(SoulCurrentProviderService.Open))!.GetParameters());
         // This test requires the explicitly unprovisioned local test environment.
         Assert.False(File.Exists("/Library/Application Support/DPS/soul-current/bootstrap.v1.json"));
-        Assert.Throws<SoulRegistryException>(() => SoulCurrentComposition.CreateForHost());
+        Assert.Throws<SoulRegistryException>(() => SoulCurrentProviderService.Open());
     }
 
     [Fact]
@@ -163,6 +163,63 @@ public sealed class SoulCurrentCompositionTests
             Assert.Throws<SoulRegistryException>(() => SoulCurrentNative.RequirePeer(-1, SoulCurrentNative.geteuid(), SoulCurrentNative.getegid()));
         }
         finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [Trait("Category", "Contract")]
+    [InlineData("soul.current.configuration.v2.corpus.json", 47)]
+    [InlineData("soul.current.lease.session.v1.corpus.json", 121)]
+    public void FourRoleCorpusRejectsScopePhaseVersionAndEncodingConfusion(string resource, int floor)
+    {
+        using var stream = typeof(SoulCurrentCompositionTests).Assembly.GetManifestResourceStream(resource)!;
+        using var document = System.Text.Json.JsonDocument.Parse(stream);
+        var cases = document.RootElement.GetProperty("cases").EnumerateArray().ToArray();
+        Assert.Equal(floor, cases.Length);
+        Assert.Equal(document.RootElement.GetProperty("inventory").EnumerateArray().Select(x => x.GetString()), cases.Select(x => x.GetProperty("id").GetString()));
+        foreach (var test in cases)
+        {
+            var bytes = test.TryGetProperty("raw_base64", out var raw) ? Convert.FromBase64String(raw.GetString()!)
+                : System.Text.Encoding.UTF8.GetBytes(test.GetProperty("payload").GetRawText());
+            var error = Record.Exception(() =>
+            {
+                if (resource.Contains("configuration", StringComparison.Ordinal)) _ = Dps.SoulRegistry.Contracts.SoulCurrentConfigurationV2.FromUtf8Json(bytes);
+                else _ = Dps.SoulRegistry.Contracts.SoulCurrentLeaseSessionV1.FromUtf8Json(bytes);
+            });
+            Assert.True((error is null) == test.GetProperty("codec_expected").GetBoolean(), test.GetProperty("id").GetString() + ": " + error?.GetType().Name + ": " + error?.Message);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void DualLauncherMergeRejectsDifferentSharedBytesWithoutReplacingFrozenCopy()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dps-merge-" + Guid.NewGuid().ToString("N"));
+        var first = Path.Combine(root, "first"); var second = Path.Combine(root, "second"); var generation = Path.Combine(root, "generation");
+        foreach (var path in new[] { first, second, generation }) Directory.CreateDirectory(path);
+        try
+        {
+            File.WriteAllBytes(Path.Combine(first, "shared.dll"), [1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(second, "shared.dll"), [1, 2, 4]);
+            Assert.Throws<InvalidOperationException>(() => SoulCurrentGenerationFixture.Merge(first, second, generation));
+            Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(generation, "shared.dll")));
+            File.WriteAllBytes(Path.Combine(second, "shared.dll"), [1, 2, 3]);
+            SoulCurrentGenerationFixture.Merge(first, second, generation);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [Trait("Category", "Contract")]
+    [InlineData(0)]
+    [InlineData(16385)]
+    [InlineData(100)]
+    public async Task PublicLeaseFramingRejectsOversizeEmptyAndTruncatedFrames(int length)
+    {
+        var header = new byte[4]; BinaryPrimitives.WriteUInt32BigEndian(header, (uint)length);
+        using var stream = new MemoryStream(header);
+        if (length == 100)
+            await Assert.ThrowsAsync<EndOfStreamException>(() => Dps.SoulRegistry.Contracts.SoulCurrentLeaseSessionV1.ReadAsync(stream, TestContext.Current.CancellationToken));
+        else await Assert.ThrowsAsync<ArgumentException>(() => Dps.SoulRegistry.Contracts.SoulCurrentLeaseSessionV1.ReadAsync(stream, TestContext.Current.CancellationToken));
     }
 
     private static void Chmod(params string[] args)

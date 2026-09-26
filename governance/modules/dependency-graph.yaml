@@ -102,7 +102,7 @@
     {
       "consumer": "control-plane-host",
       "provider": "soul-registry",
-      "reason": "Proposed composition-only fixed Soul factory exception; internal identity reader uses quarantine-only contracts; no runtime activation"
+      "reason": "Soul-owned contracts only; quarantined AF_UNIX lease and Host possession envelopes; no Soul runtime import or production activation"
     },
     {
       "consumer": "evidence-service",

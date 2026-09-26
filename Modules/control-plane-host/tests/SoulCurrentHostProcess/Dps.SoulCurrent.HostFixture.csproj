@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>Dps.SoulCurrent.HostFixture</AssemblyName><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/Dps.ControlPlaneHost/Dps.ControlPlaneHost.csproj" /></ItemGroup>
+</Project>

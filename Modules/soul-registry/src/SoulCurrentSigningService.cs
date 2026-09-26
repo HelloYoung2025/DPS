@@ -21,6 +21,7 @@ public sealed class SoulCurrentSigningService : IDisposable
         ECDsa primaryKey, ECDsa? statusKey)
     {
         _installation = installation; _hostAuth = hostAuth; _primaryKey = primaryKey; _statusKey = statusKey;
+        installation.VerifyLoadedArtifacts();
         var c = installation.Configuration;
         if (Convert.ToBase64String(primaryKey.ExportSubjectPublicKeyInfo()) !=
             (hostAuth ? c.HostAuthSpkiBase64 : c.CurrentSpkiBase64) ||
@@ -28,18 +29,8 @@ public sealed class SoulCurrentSigningService : IDisposable
             throw SoulCurrentInstallation.Unavailable();
     }
 
-    public static SoulCurrentSigningService OpenHostAuthenticationService()
-    {
-        var installation = SoulCurrentInstallation.Load(SoulInstallationLocation.Production);
-        return new(installation, true, installation.ReadServiceKey("host-possession"), null);
-    }
-    public static SoulCurrentSigningService OpenCurrentService()
-    {
-        var installation = SoulCurrentInstallation.Load(SoulInstallationLocation.Production);
-        var key = installation.ReadServiceKey("soul-current");
-        try { return new(installation, false, key, installation.ReadServiceKey("current-status")); }
-        catch { key.Dispose(); throw; }
-    }
+    public static SoulCurrentSigningService OpenHostAuthenticationService() => throw SoulCurrentInstallation.Unavailable();
+    public static SoulCurrentSigningService OpenCurrentService() => throw SoulCurrentInstallation.Unavailable();
     internal static SoulCurrentSigningService ForSyntheticProcess(SoulInstallationLocation location,
         bool hostAuth, ECDsa primary, ECDsa? status)
     {
@@ -54,14 +45,21 @@ public sealed class SoulCurrentSigningService : IDisposable
         var c = _installation.Configuration;
         if (SoulCurrentNative.geteuid() != (_hostAuth ? c.HostAuthUid : c.CurrentServiceUid) ||
             SoulCurrentNative.getegid() != (_hostAuth ? c.HostAuthGid : c.CurrentServiceGid)) throw SoulCurrentInstallation.Unavailable();
-        SoulCurrentNative.RequirePeer(checked((int)socket.Handle), checked((uint)c.HostUid), checked((uint)c.HostGid));
+        SoulCurrentNative.RequirePeer(checked((int)socket.Handle), checked((uint)(_hostAuth ? c.HostUid : c.ProviderUid)), checked((uint)(_hostAuth ? c.HostGid : c.ProviderGid)));
         using var stream = new NetworkStream(socket, false);
         using var initialTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         initialTimeout.CancelAfter(TimeSpan.FromSeconds(5));
         SoulCurrentSigningProtocolV1? request = null;
+        SoulCurrentLeaseSessionV1? envelope = null;
         try
         {
-            request = await SoulCurrentSigningClient.ReadAsync(stream, initialTimeout.Token);
+            if (_hostAuth)
+            {
+                envelope = await SoulCurrentLeaseSessionV1.ReadAsync(stream, initialTimeout.Token);
+                if (envelope.Phase != "acquire/possession-request" || envelope.Sequence != 1) throw SoulCurrentInstallation.Unavailable();
+                request = SoulCurrentSigningProtocolV1.FromUtf8Json(Convert.FromBase64String(envelope.SigningBase64));
+            }
+            else request = await SoulCurrentSigningClient.ReadAsync(stream, initialTimeout.Token);
             using var deadline = new SoulCurrentDeadline(initialTimeout.Token, request.ExpiresAt);
             RequireRequest(request);
             if (_hostAuth)
@@ -69,15 +67,21 @@ public sealed class SoulCurrentSigningService : IDisposable
                 if (request.Operation != "host-possession" || request.MessageType != "challenge-request")
                     throw SoulCurrentInstallation.Unavailable();
                 var challenge = request with { MessageType = "challenge", ChallengeNonce = SoulCurrentSigningClient.Nonce() };
-                await SoulCurrentSigningClient.WriteAsync(stream, challenge, deadline.Token);
-                var answer = await SoulCurrentSigningClient.ReadAsync(stream, deadline.Token);
+                await SoulCurrentLeaseSessionV1.WriteAsync(stream, envelope!.Reply("acquire/possession-challenge") with
+                { SigningBase64 = Convert.ToBase64String(challenge.ToUtf8Json()) }, deadline.Token);
+                var answerEnvelope = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token);
+                envelope.RequireBinding(answerEnvelope);
+                if (answerEnvelope.Phase != "acquire/possession-answer" || answerEnvelope.Sequence != 3 ||
+                    answerEnvelope.RequestId != envelope.RequestId || answerEnvelope.Nonce != envelope.Nonce) throw SoulCurrentInstallation.Unavailable();
+                var answer = SoulCurrentSigningProtocolV1.FromUtf8Json(Convert.FromBase64String(answerEnvelope.SigningBase64));
                 SoulCurrentSigningClient.RequireAssociation(challenge, answer);
                 if (answer.Operation != "host-possession" || answer.MessageType != "answer" ||
                     answer.ChallengeNonce != challenge.ChallengeNonce) throw SoulCurrentInstallation.Unavailable();
                 RequireRequest(answer); MarkUsed("host:" + answer.ChallengeNonce, answer.ExpiresAt);
                 var proof = answer with { MessageType = "proof", SignatureBase64 = Convert.ToBase64String(new byte[64]) };
                 proof = proof with { SignatureBase64 = SignHostProof(proof) };
-                deadline.RequireLive(); await SoulCurrentSigningClient.WriteAsync(stream, proof, deadline.Token);
+                deadline.RequireLive(); await SoulCurrentLeaseSessionV1.WriteAsync(stream, answerEnvelope.Reply("acquire/possession-proof") with
+                { SigningBase64 = Convert.ToBase64String(proof.ToUtf8Json()) }, deadline.Token);
             }
             else
             {
@@ -112,7 +116,12 @@ public sealed class SoulCurrentSigningService : IDisposable
             {
                 var response = request with { Operation = "error", MessageType = "response", PossessionBase64 = "",
                     StatusBase64 = "", ResolutionBase64 = "", SignatureBase64 = "", ErrorCode = "AUTHORITY_UNAVAILABLE" };
-                try { await SoulCurrentSigningClient.WriteAsync(stream, response, initialTimeout.Token); }
+                try
+                {
+                    if (_hostAuth && envelope is not null)
+                        await SoulCurrentLeaseSessionV1.WriteAsync(stream, envelope.Reply("error/response") with { ErrorCode = "AUTHORITY_UNAVAILABLE" }, initialTimeout.Token);
+                    else await SoulCurrentSigningClient.WriteAsync(stream, response, initialTimeout.Token);
+                }
                 catch (Exception writeError) when (writeError is not OutOfMemoryException) { }
             }
         }
@@ -120,7 +129,7 @@ public sealed class SoulCurrentSigningService : IDisposable
 
     private void RequireRequest(SoulCurrentSigningProtocolV1 request)
     {
-        _installation.Revalidate(); _installation.RequireQuery(request.ReadQuery());
+        _installation.Revalidate(); _installation.VerifyLoadedArtifacts(); _installation.RequireQuery(request.ReadQuery());
         if (request.ConfigurationSha256 != _installation.ConfigurationSha256 ||
             request.ReleaseBomSha256 != _installation.Composition.ReleaseBomSha256 ||
             request.ReleaseGeneration != _installation.Composition.ReleaseGeneration ||

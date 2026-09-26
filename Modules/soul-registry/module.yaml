@@ -85,6 +85,14 @@
         "status": "proposed",
         "mode": "quarantine-only",
         "ownerModule": "soul-registry"
+      },
+      {
+        "contractId": "soul.current.lease.session",
+        "major": 1,
+        "source": "Modules/soul-registry/contracts/provided/soul.current.lease.session.v1.schema.json",
+        "status": "proposed",
+        "mode": "quarantine-only",
+        "ownerModule": "soul-registry"
       }
     ],
     "consumed": []
@@ -93,15 +101,15 @@
     "inbound": [
       {
         "peerModule": "control-plane-host",
-        "contractId": "soul.current.query",
+        "contractId": "soul.current.lease.session",
         "major": 1,
         "direction": "inbound",
-        "transport": "in-process-api",
+        "transport": "read-only-query",
         "timeoutMs": 5000,
-        "retryPolicy": "none-single-shared-deadline",
-        "idempotencyKey": "request_id:nonce:session_id",
-        "authScope": "soul-current.identity-read:exact-tenant-and-soul",
-        "failureMode": "fail-closed-proposed-quarantine-only"
+        "retryPolicy": "none-single-AF_UNIX-session-fixed-deadline",
+        "idempotencyKey": "instance_id:session_id:request_id:nonce:sequence",
+        "authScope": "soul-current.identity-read:fixed-OS-peer-and-exact-query",
+        "failureMode": "fail-closed-quarantine-only-no-production-entry"
       }
     ],
     "outbound": [
@@ -131,15 +139,15 @@
       },
       {
         "peerModule": "control-plane-host",
-        "contractId": "soul.current.resolution",
+        "contractId": "soul.current.lease.session",
         "major": 1,
         "direction": "outbound",
-        "transport": "in-process-api",
+        "transport": "read-only-query",
         "timeoutMs": 5000,
-        "retryPolicy": "none-single-shared-deadline",
-        "idempotencyKey": "request_id:nonce:session_id",
-        "authScope": "soul-current.identity-read:exact-tenant-and-soul",
-        "failureMode": "fail-closed-proposed-quarantine-only"
+        "retryPolicy": "none-single-AF_UNIX-session-fixed-deadline",
+        "idempotencyKey": "instance_id:session_id:request_id:nonce:sequence",
+        "authScope": "soul-current.identity-read:fixed-OS-peer-and-exact-query",
+        "failureMode": "fail-closed-quarantine-only-no-production-entry"
       }
     ]
   },
@@ -275,6 +283,9 @@
         1
       ],
       "soul.current.resolution": [
+        1
+      ],
+      "soul.current.lease.session": [
         1
       ]
     },

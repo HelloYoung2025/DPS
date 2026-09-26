@@ -5,7 +5,7 @@ namespace Dps.ControlPlaneHost;
 
 // Business reader depends only on contracts; only the fixed composition façade constructs it.
 internal sealed class ControlPlaneSoulIdentityRead(ISoulCurrentClientV1 client,
-    SoulCurrentConfigurationV1 configuration, SoulCurrentCompositionV1 installation)
+    SoulCurrentConfigurationV2 configuration, SoulCurrentCompositionV1 installation)
 {
     internal async Task<SoulResolved> ReadAsync(SoulCurrentQueryV1 query, CancellationToken cancellationToken)
     {
@@ -17,7 +17,9 @@ internal sealed class ControlPlaneSoulIdentityRead(ISoulCurrentClientV1 client,
         var snapshot = lease.Snapshot;
         Verify(snapshot, query);
         await lease.RevalidateAsync(cancellationToken);
+        await lease.DisposeAsync();
         Verify(snapshot, query);
+        if (client is ControlPlaneSoulCurrentIpcClient ipc) ipc.RequireSuccessWindow();
         cancellationToken.ThrowIfCancellationRequested();
         return snapshot.Resolution;
     }

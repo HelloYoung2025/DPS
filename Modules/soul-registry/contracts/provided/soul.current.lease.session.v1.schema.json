@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dps.local/contracts/soul.current.lease.session.v1.schema.json",
+  "title": "soul.current.lease.session/v1",
+  "description": "Quarantine-only AF_UNIX envelope. Codec additionally enforces canonical bytes, decoded typed payloads and exact cross-field/query bindings; runtime checks peer/signatures/session/deadline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "producer_module",
+    "soul_id",
+    "device_binding_id",
+    "platform_account_id",
+    "trace_id",
+    "idempotency_key",
+    "occurred_at",
+    "privacy_class",
+    "phase",
+    "request_id",
+    "nonce",
+    "instance_id",
+    "session_id",
+    "sequence",
+    "tenant_ref",
+    "query_base64",
+    "query_sha256",
+    "configuration_sha256",
+    "release_bom_sha256",
+    "release_generation",
+    "expires_at",
+    "signing_base64",
+    "resolution_base64",
+    "status_base64",
+    "error_code"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "contract_id": {
+      "const": "soul.current.lease.session/v1"
+    },
+    "producer_module": {
+      "enum": [
+        "control-plane-host",
+        "soul-registry"
+      ]
+    },
+    "soul_id": {
+      "type": "string",
+      "pattern": "^soul_[a-f0-9]{64}$(?![\\s\\S])",
+      "minLength": 69,
+      "maxLength": 69
+    },
+    "device_binding_id": {
+      "type": "string",
+      "pattern": "^db_[a-f0-9]{32}$(?![\\s\\S])",
+      "minLength": 35,
+      "maxLength": 35
+    },
+    "platform_account_id": {
+      "type": "string",
+      "pattern": "^pa_[a-f0-9]{32}$(?![\\s\\S])",
+      "minLength": 35,
+      "maxLength": 35
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^trace_[a-f0-9]{32}$(?![\\s\\S])",
+      "minLength": 38,
+      "maxLength": 38
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^idem_[a-f0-9]{64}$(?![\\s\\S])",
+      "minLength": 69,
+      "maxLength": 69
+    },
+    "occurred_at": {
+      "type": "string",
+      "pattern": "^(?!0000)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{7}Z$(?![\\s\\S])",
+      "minLength": 28,
+      "maxLength": 28,
+      "format": "date-time"
+    },
+    "privacy_class": {
+      "const": "sensitive"
+    },
+    "phase": {
+      "enum": [
+        "acquire/begin",
+        "acquire/challenge",
+        "acquire/possession-request",
+        "acquire/possession-challenge",
+        "acquire/possession-answer",
+        "acquire/possession-proof",
+        "acquire/complete",
+        "acquire/acquired",
+        "revalidate/request",
+        "revalidate/response",
+        "dispose/request",
+        "dispose/ack",
+        "error/response"
+      ]
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+      "format": "uuid",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^nonce_[a-f0-9]{64}$(?![\\s\\S])",
+      "minLength": 70,
+      "maxLength": 70
+    },
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+      "format": "uuid",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "session_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "tenant_ref": {
+      "type": "string",
+      "pattern": "^tenant_[a-f0-9]{64}$(?![\\s\\S])",
+      "minLength": 71,
+      "maxLength": 71
+    },
+    "query_base64": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 24000,
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+    },
+    "query_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "configuration_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "release_bom_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "release_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "expires_at": {
+      "type": "string",
+      "pattern": "^(?!0000)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{7}Z$(?![\\s\\S])",
+      "minLength": 28,
+      "maxLength": 28,
+      "format": "date-time"
+    },
+    "signing_base64": {
+      "type": "string",
+      "maxLength": 24000
+    },
+    "resolution_base64": {
+      "type": "string",
+      "maxLength": 24000
+    },
+    "status_base64": {
+      "type": "string",
+      "maxLength": 24000
+    },
+    "error_code": {
+      "enum": [
+        "",
+        "AUTHORITY_UNAVAILABLE",
+        "NOT_FOUND_OR_DENIED",
+        "DEADLINE_EXCEEDED"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/begin"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "const": ""
+        },
+        "sequence": {
+          "const": 1
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/challenge"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/possession-request"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/possession-challenge"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/possession-answer"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/possession-proof"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/complete"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "acquire/acquired"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "status_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "revalidate/request"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "revalidate/response"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24000,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$(?![\\s\\S])"
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "dispose/request"
+        },
+        "producer_module": {
+          "const": "control-plane-host"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "dispose/ack"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "const": ""
+        }
+      }
+    },
+    {
+      "properties": {
+        "phase": {
+          "const": "error/response"
+        },
+        "producer_module": {
+          "const": "soul-registry"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "signing_base64": {
+          "const": ""
+        },
+        "resolution_base64": {
+          "const": ""
+        },
+        "status_base64": {
+          "const": ""
+        },
+        "error_code": {
+          "enum": [
+            "AUTHORITY_UNAVAILABLE",
+            "NOT_FOUND_OR_DENIED",
+            "DEADLINE_EXCEEDED"
+          ]
+        }
+      }
+    }
+  ]
+}

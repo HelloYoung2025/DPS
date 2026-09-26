@@ -28,10 +28,11 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
     public string Root { get; }
     public string Schema { get; } = "soul_current";
     public SoulCurrentQueryV1 Query { get; private set; } = null!;
-    public SoulCurrentConfigurationV1 Configuration { get; private set; } = null!;
+    public SoulCurrentConfigurationV2 Configuration { get; private set; } = null!;
     public SoulCurrentAuthorityStateV1 State { get; private set; } = null!;
     public SoulCurrentCompositionV1 Composition { get; private set; } = null!;
-    public int[] SignerProcessIds => _services.Select(p => p.Id).ToArray();
+    public int[] SignerProcessIds => _services.Take(2).Select(p => p.Id).ToArray();
+    public int[] ServiceProcessIds => _services.Take(3).Select(p => p.Id).ToArray();
 
     private SoulCurrentProcessFixture(string admin)
     {
@@ -40,7 +41,7 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
         _ownerConnection = new NpgsqlConnectionStringBuilder(admin) { Database = _database, Pooling = false }.ConnectionString;
         Root = "/private/tmp/dps-p05-" + id[..12];
         Directory.CreateDirectory(Root); File.SetUnixFileMode(Root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        foreach (var relative in new[] { "installation", "installation/releases", "installation/releases/1", "installation/secrets", "run", "run/host-auth", "run/current" })
+        foreach (var relative in new[] { "installation", "installation/releases", "installation/releases/1", "installation/secrets", "run", "run/host-auth", "run/current", "run/provider" })
         {
             var path = Path.Combine(Root, relative); Directory.CreateDirectory(path);
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -104,20 +105,23 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
         Write("secrets/signer", Encoding.UTF8.GetBytes(signerPassword));
         var output = Path.Combine(RepositoryRoot(), "Modules/soul-registry/tests/SignerProcess/bin/Release/net10.0");
         if (!File.Exists(Path.Combine(output, "Dps.SoulCurrent.SignerFixture.dll"))) throw new InvalidOperationException("Build the signer fixture first.");
-        foreach (var path in Directory.GetFiles(output))
-        {
-            var destination = Path.Combine(_generation, Path.GetFileName(path));
-            File.Copy(path, destination); File.SetUnixFileMode(destination, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
+        var hostOutput = Path.Combine(RepositoryRoot(), "Modules/control-plane-host/tests/SoulCurrentHostProcess/bin/Release/net10.0");
+        if (!File.Exists(Path.Combine(hostOutput, "Dps.SoulCurrent.HostFixture.dll"))) throw new InvalidOperationException("Build the Host fixture first.");
+        // Freeze the merged generation before ANY child starts. Common artifacts must be byte-identical.
+        SoulCurrentGenerationFixture.Merge(output, hostOutput, _generation);
+        // Darwin process-start observations can be coarser than vnode timestamps. Cross the frozen second before starting.
+        var frozenSecond = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        while (DateTimeOffset.UtcNow.ToUnixTimeSeconds() <= frozenSecond) await Task.Delay(20, token);
         var hostAuth = Start("host-auth"); var current = Start("current"); _services.Add(hostAuth); _services.Add(current);
         var hostKeys = await PublicKeysAsync(hostAuth, token); var currentKeys = await PublicKeysAsync(current, token);
         if (hostAuth.Id == current.Id || hostAuth.Id == Environment.ProcessId || current.Id == Environment.ProcessId)
             throw new InvalidOperationException("Independent signer processes required.");
         var adminBuilder = new NpgsqlConnectionStringBuilder(_admin);
-        Configuration = new SoulCurrentConfigurationV1
+        Configuration = new SoulCurrentConfigurationV2
         {
             ConfigurationId = Guid.NewGuid(), TenantRef = Query.TenantRef, SoulId = Query.SoulId, PrincipalId = "synthetic-host",
             ConsumerModule = "control-plane-host", Permission = "soul-current.identity-read", HostUid = SoulCurrentNative.geteuid(), HostGid = SoulCurrentNative.getegid(),
+            ProviderUid = SoulCurrentNative.geteuid(), ProviderGid = SoulCurrentNative.getegid(),
             HostAuthUid = SoulCurrentNative.geteuid(), HostAuthGid = SoulCurrentNative.getegid(), HostAuthKeyId = "synthetic-host-auth",
             HostAuthSpkiBase64 = hostKeys.Primary, CurrentServiceUid = SoulCurrentNative.geteuid(), CurrentServiceGid = SoulCurrentNative.getegid(),
             CurrentKeyId = "synthetic-current", CurrentSpkiBase64 = currentKeys.Primary, StatusKeyId = "synthetic-status", StatusSpkiBase64 = currentKeys.Status,
@@ -132,14 +136,17 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
             HostAuthKeyId = Configuration.HostAuthKeyId, CurrentKeyId = Configuration.CurrentKeyId, StatusKeyId = Configuration.StatusKeyId
         };
         WriteInstallation();
+        var provider = Start("provider"); _services.Add(provider);
+        _ = await PublicKeysAsync(provider, token);
         foreach (var process in _services)
         {
             await process.StandardInput.WriteLineAsync("START"); await process.StandardInput.FlushAsync(token);
-            if (await process.StandardOutput.ReadLineAsync(token) != "READY") throw new InvalidOperationException("Synthetic signer did not become ready.");
+            var ready = await process.StandardOutput.ReadLineAsync(token);
+            if (ready != "READY") throw new InvalidOperationException("Synthetic service did not become ready: " + ready);
         }
     }
 
-    public void WriteInstallation(SoulCurrentConfigurationV1? configuration = null)
+    public void WriteInstallation(SoulCurrentConfigurationV2? configuration = null)
     {
         if (configuration is not null) Configuration = configuration;
         var config = Configuration.ToUtf8Json();
@@ -160,7 +167,7 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
             InstallationId = Guid.NewGuid(), Enabled = true, RootKeyId = "synthetic-root", RootSpkiBase64 = Convert.ToBase64String(_rootKey.ExportSubjectPublicKeyInfo()),
             ActiveConfigurationSha256 = Hash(config), ActiveReleaseBomSha256 = State.ReleaseBomSha256, ActiveReleaseGeneration = State.ReleaseGeneration
         };
-        Write("configuration.v1.json", config); Write("composition.v1.json", Composition.ToUtf8Json());
+        Write("configuration.v2.json", config); Write("composition.v1.json", Composition.ToUtf8Json());
         Write("bootstrap.v1.json", bootstrap.ToUtf8Json()); Write("authority-state.v1.json", State.ToUtf8Json());
     }
 
@@ -188,12 +195,21 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
         if (await proxy.StandardOutput.ReadLineAsync(token) != "READY") throw new InvalidOperationException("Owned delay proxy failed.");
         return proxy;
     }
-    public Process Start(string mode)
+    public async Task<Process> ProxyProviderAsync(string fault, CancellationToken token)
+    {
+        var directory = Path.Combine(Root, "run/provider");
+        File.Move(Path.Combine(directory, "service.sock"), Path.Combine(directory, "backend.sock"));
+        var proxy = Start("provider-proxy", fault); _services.Add(proxy);
+        if (await proxy.StandardOutput.ReadLineAsync(token) != "READY") throw new InvalidOperationException("Owned provider proxy failed.");
+        return proxy;
+    }
+    public Process Start(string mode, string argument = "synthetic-same-uid")
     {
         var executable = Path.Combine(Environment.GetEnvironmentVariable("DOTNET_ROOT") ?? throw new InvalidOperationException("Pinned DOTNET_ROOT required."), "dotnet");
         var start = new ProcessStartInfo(executable) { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = _generation };
-        start.ArgumentList.Add(Path.Combine(_generation, "Dps.SoulCurrent.SignerFixture.dll"));
-        start.ArgumentList.Add(mode); start.ArgumentList.Add(Root); start.ArgumentList.Add("synthetic-same-uid");
+        start.ArgumentList.Add(Path.Combine(_generation, mode.StartsWith("host-", StringComparison.Ordinal) && mode != "host-auth"
+            ? "Dps.SoulCurrent.HostFixture.dll" : "Dps.SoulCurrent.SignerFixture.dll"));
+        start.ArgumentList.Add(mode); start.ArgumentList.Add(Root); start.ArgumentList.Add(argument);
         // The child gets no bootstrap-admin database credential.
         start.Environment.Remove("DPS_TEST_POSTGRES");
         return Process.Start(start) ?? throw new InvalidOperationException("Child start failed.");
@@ -343,5 +359,23 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
             return Task.FromResult(new VerifiedAliasEvidence(proof.Hash, proof.Alias, request.TargetSoulId, proof.Control));
         }
         public void Dispose() => _key.Dispose();
+    }
+}
+
+internal static class SoulCurrentGenerationFixture
+{
+    internal static void Merge(string first, string second, string generation)
+    {
+        foreach (var path in Directory.GetFiles(first).Concat(Directory.GetFiles(second)))
+        {
+            var destination = Path.Combine(generation, Path.GetFileName(path));
+            if (File.Exists(destination))
+            {
+                if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(File.ReadAllBytes(destination))) throw new InvalidOperationException("Launcher artifact mismatch.");
+                continue;
+            }
+            File.Copy(path, destination);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(destination, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 }

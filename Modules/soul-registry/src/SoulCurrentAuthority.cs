@@ -29,48 +29,39 @@ internal sealed class SoulCurrentDeadline : IDisposable
     public void Dispose() => _cancellation.Dispose();
 }
 
-internal sealed class SoulCurrentAuthority(SoulCurrentInstallation installation) : ISoulCurrentClientV1
+internal sealed class SoulCurrentAuthority(SoulCurrentInstallation installation)
 {
-    private readonly Guid _instance = Guid.NewGuid();
-
-    public async Task<SoulCurrentResolutionV1> ResolveCurrentAsync(SoulCurrentQueryV1 query, CancellationToken cancellationToken)
+    internal async Task<Lease> AcquireAsync(SoulCurrentLeaseSessionV1 request, SoulCurrentSigningProtocolV1 proof,
+        SoulCurrentDeadline deadline)
     {
-        await using var lease = await AcquireCurrentAsync(query, cancellationToken);
-        await lease.RevalidateAsync(cancellationToken);
-        return lease.Snapshot;
-    }
-
-    public async Task<ISoulCurrentLeaseV1> AcquireCurrentAsync(SoulCurrentQueryV1 query, CancellationToken cancellationToken)
-    {
-        var deadline = new SoulCurrentDeadline(cancellationToken);
         SoulCurrentOwnerLease? owner = null;
         try
         {
+            var query = request.Query; var instance = request.InstanceId; var session = Guid.Parse(request.SessionId);
             installation.Revalidate(); installation.VerifyLoadedArtifacts(); installation.RequireQuery(query);
+            SoulCurrentInstallation.Verify(installation.Configuration.HostAuthSpkiBase64, proof.CanonicalBytes(), proof.SignatureBase64);
             var connectionString = installation.ReadDatabaseConnection(false);
             await RequireReadOnlyRoleAsync(connectionString, installation.Configuration.DatabaseSchema,
                 installation.Configuration.DatabaseRuntimeRole, deadline.Token);
             owner = await SoulCurrentOwnerLease.AcquireAsync(connectionString, installation.Configuration.DatabaseSchema,
                 query.TenantRef, query.SoulId, deadline.Token);
             var alias = await owner.ReadAliasAsync(deadline.Token);
-            var session = Guid.NewGuid(); var signing = new SoulCurrentSigningClient(installation);
-            var proof = await signing.PossessionAsync(query, _instance, session, deadline);
-            var status = await signing.StatusAsync(query, _instance, session, proof, deadline);
-            var preSign = await signing.StatusAsync(query, _instance, session, proof, deadline);
+            var signing = new SoulCurrentSigningClient(installation);
+            var status = await signing.StatusAsync(query, instance, session, proof, deadline, request.RequestId, request.Nonce);
+            var preSign = await signing.StatusAsync(query, instance, session, proof, deadline);
             RequireSameAuthority(status, preSign);
-            var resolution = await signing.SignCurrentAsync(query, _instance, session, proof, preSign, deadline);
+            var resolution = await signing.SignCurrentAsync(query, instance, session, proof, preSign, deadline);
             if (resolution.ResolutionRevision != owner.Snapshot.Revision || resolution.RevocationEpoch != owner.Snapshot.RevocationEpoch ||
                 resolution.Status != owner.Snapshot.Status || resolution.Resolution.AliasKind != alias.Kind ||
                 resolution.Resolution.AliasDigest != alias.Digest || resolution.Resolution.AliasKeyId != alias.KeyId)
                 throw SoulCurrentInstallation.Unavailable();
-            await owner.RevalidateAsync(deadline.Token);
-            deadline.RequireLive();
-            return new Lease(installation, signing, owner, query, _instance, session, proof, status, resolution, deadline);
+            await owner.RevalidateAsync(deadline.Token); deadline.RequireLive();
+            return new Lease(installation, signing, owner, query, instance, session, proof, status, resolution, deadline);
         }
         catch
         {
             if (owner is not null) await owner.DisposeAsync();
-            deadline.Dispose(); throw;
+            throw;
         }
     }
 
@@ -108,45 +99,44 @@ internal sealed class SoulCurrentAuthority(SoulCurrentInstallation installation)
         if (await command.ExecuteScalarAsync(token) is not true) throw SoulCurrentInstallation.Unavailable();
     }
 
-    private sealed class Lease(SoulCurrentInstallation installation, SoulCurrentSigningClient signing,
+    internal sealed class Lease(SoulCurrentInstallation installation, SoulCurrentSigningClient signing,
         SoulCurrentOwnerLease owner, SoulCurrentQueryV1 query, Guid instance, Guid session,
         SoulCurrentSigningProtocolV1 proof, SoulCurrentStatusV1 initialStatus,
-        SoulCurrentResolutionV1 snapshot, SoulCurrentDeadline deadline) : ISoulCurrentLeaseV1
+        SoulCurrentResolutionV1 snapshot, SoulCurrentDeadline deadline) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _operation = new(1, 1);
-        private bool _disposed;
-        public SoulCurrentResolutionV1 Snapshot => !_disposed ? snapshot : throw SoulCurrentInstallation.Unavailable();
-        public async Task RevalidateAsync(CancellationToken cancellationToken)
+        private int _terminal;
+        public SoulCurrentResolutionV1 Snapshot => Volatile.Read(ref _terminal) == 0 ? snapshot : throw SoulCurrentInstallation.Unavailable();
+        internal SoulCurrentStatusV1 InitialStatus => initialStatus;
+        internal async Task<SoulCurrentStatusV1> RevalidateAsync(Guid request, string nonce)
         {
-            await _operation.WaitAsync(cancellationToken);
+            await _operation.WaitAsync(deadline.Token);
             try
             {
-                if (_disposed) throw SoulCurrentInstallation.Unavailable();
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken);
+                if (Volatile.Read(ref _terminal) != 0) throw SoulCurrentInstallation.Unavailable();
                 installation.Revalidate(); installation.VerifyLoadedArtifacts();
-                await owner.RevalidateAsync(linked.Token);
-                var current = await signing.StatusAsync(query, instance, session, proof, deadline);
+                await owner.RevalidateAsync(deadline.Token);
+                var current = await signing.StatusAsync(query, instance, session, proof, deadline, request, nonce);
                 RequireSameAuthority(initialStatus, current);
-                await owner.RevalidateAsync(linked.Token);
+                await owner.RevalidateAsync(deadline.Token);
                 snapshot.RequireValidWindow(DateTimeOffset.UtcNow); deadline.RequireLive();
-                linked.Token.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _terminal) != 0) throw SoulCurrentInstallation.Unavailable();
+                return current;
             }
-            catch
-            {
-                _disposed = true;
-                await owner.DisposeAsync(); deadline.Dispose(); throw;
-            }
+            catch { Interlocked.Exchange(ref _terminal, 1); throw; }
             finally { _operation.Release(); }
         }
-        public async ValueTask DisposeAsync()
+        internal async Task ReleaseAsync(CancellationToken token)
         {
-            await _operation.WaitAsync(CancellationToken.None);
-            try
-            {
-                if (_disposed) return;
-                _disposed = true; await owner.DisposeAsync(); deadline.Dispose();
-            }
+            if (Interlocked.Exchange(ref _terminal, 1) != 0) throw SoulCurrentInstallation.Unavailable();
+            await _operation.WaitAsync(token);
+            try { await owner.ReleaseConfirmedAsync(token); }
             finally { _operation.Release(); }
+        }
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Exchange(ref _terminal, 1);
+            return owner.DisposeAsync();
         }
     }
 }

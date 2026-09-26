@@ -16,6 +16,8 @@ internal sealed class SoulCurrentOwnerLease : IAsyncDisposable
     private readonly string _lockName;
     private readonly SemaphoreSlim _operation = new(1, 1);
     private bool _disposed;
+    private readonly object _cleanupGate = new();
+    private Task? _cleanup;
     internal OwnerState Snapshot { get; }
     internal int BackendProcessId => _connection.ProcessID;
 
@@ -114,16 +116,46 @@ internal sealed class SoulCurrentOwnerLease : IAsyncDisposable
             throw new SoulRegistryException("Soul owner lock or state changed during lease.");
     }
 
-    public async ValueTask DisposeAsync()
+    internal async Task ReleaseConfirmedAsync(CancellationToken token)
     {
-        await _operation.WaitAsync(CancellationToken.None);
+        await _operation.WaitAsync(token);
         try
         {
-            if (_disposed) return;
+            if (_disposed || _connection.State != ConnectionState.Open) throw SoulCurrentInstallation.Unavailable();
             _disposed = true;
-            // Closing the nonpooled session releases its lock, including cancellation/error paths.
-            await _connection.DisposeAsync();
+            await using (var unlock = new NpgsqlCommand("SELECT pg_advisory_unlock(hashtextextended(@lock_name, 0))", _connection))
+            {
+                unlock.Parameters.AddWithValue("lock_name", _lockName);
+                if (await unlock.ExecuteScalarAsync(token) is not true) throw SoulCurrentInstallation.Unavailable();
+            }
+            await using var remaining = new NpgsqlCommand("""
+                SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks
+                  WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND objsubid = 1
+                  AND classid = ((hashtextextended(@lock_name, 0) >> 32) & 4294967295)::oid
+                  AND objid = (hashtextextended(@lock_name, 0) & 4294967295)::oid)
+                """, _connection);
+            remaining.Parameters.AddWithValue("lock_name", _lockName);
+            if (await remaining.ExecuteScalarAsync(token) is not false) throw SoulCurrentInstallation.Unavailable();
         }
+        finally { _operation.Release(); }
+        await DisposeAsync();
+        token.ThrowIfCancellationRequested();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Task cleanup;
+        lock (_cleanupGate) cleanup = _cleanup ??= CloseAsync();
+        // A timeout never means the driver stopped; the single late cleanup remains observed.
+        _ = cleanup.ContinueWith(t => { _ = t.Exception; }, CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        await cleanup.WaitAsync(TimeSpan.FromMilliseconds(5000));
+    }
+    private async Task CloseAsync()
+    {
+        _disposed = true;
+        await _operation.WaitAsync(CancellationToken.None);
+        try { await _connection.DisposeAsync(); }
         finally { _operation.Release(); }
     }
 }

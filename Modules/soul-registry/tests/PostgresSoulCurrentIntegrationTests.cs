@@ -174,7 +174,7 @@ public sealed class PostgresSoulCurrentIntegrationTests
         var signing = new SoulCurrentSigningClient(installation);
         using var deadline = new SoulCurrentDeadline(token);
         var instance = Guid.NewGuid(); var session = Guid.NewGuid();
-        var proof = await signing.PossessionAsync(fixture.Query, instance, session, deadline);
+        var proof = await PossessionAsync(installation, fixture.Query, instance, session, deadline);
         var request = proof with
         {
             Operation = "read-current-status", MessageType = "request", RequestId = Guid.NewGuid(),
@@ -193,7 +193,7 @@ public sealed class PostgresSoulCurrentIntegrationTests
         var genuine = await signing.SignCurrentAsync(fixture.Query, instance, session, proof, status, deadline);
         Assert.Equal(1, genuine.ResolutionRevision); Assert.Equal(fixture.Query.SoulId, genuine.SoulId);
         var secondInstance = Guid.NewGuid(); var secondSession = Guid.NewGuid();
-        var secondProof = await signing.PossessionAsync(fixture.Query, secondInstance, secondSession, deadline);
+        var secondProof = await PossessionAsync(installation, fixture.Query, secondInstance, secondSession, deadline);
         var secondStatus = await signing.StatusAsync(fixture.Query, secondInstance, secondSession, secondProof, deadline);
         var secondRequest = secondProof with { Operation = "sign-current", MessageType = "request", RequestId = Guid.NewGuid(),
             ChallengeNonce = SoulCurrentSigningClient.Nonce(), PossessionBase64 = Convert.ToBase64String(secondProof.ToUtf8Json()),
@@ -222,7 +222,7 @@ public sealed class PostgresSoulCurrentIntegrationTests
         var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
         using var deadline = new SoulCurrentDeadline(token);
         var signing = new SoulCurrentSigningClient(installation);
-        var proof = await signing.PossessionAsync(fixture.Query, Guid.NewGuid(), Guid.NewGuid(), deadline);
+        var proof = await PossessionAsync(installation, fixture.Query, Guid.NewGuid(), Guid.NewGuid(), deadline);
         var changed = mutation == "signature" ? proof with { SignatureBase64 = Convert.ToBase64String(new byte[64]) } : proof;
         var request = proof with { Operation = "read-current-status", MessageType = "request", RequestId = Guid.NewGuid(),
             ChallengeNonce = SoulCurrentSigningClient.Nonce(), SignatureBase64 = "", PossessionBase64 = Convert.ToBase64String(changed.ToUtf8Json()) };
@@ -278,7 +278,7 @@ public sealed class PostgresSoulCurrentIntegrationTests
         await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
         Assert.Equal(0, (await fixture.ReadHostAsync(null, token)).Exit);
         var before = await fixture.BusinessSnapshotAsync(token);
-        var relative = fault is "disabled" or "root-key" ? "bootstrap.v1.json" : fault == "configuration" ? "configuration.v1.json" : "composition.v1.json";
+        var relative = fault is "disabled" or "root-key" ? "bootstrap.v1.json" : fault == "configuration" ? "configuration.v2.json" : "composition.v1.json";
         var path = Path.Combine(fixture.Root, "installation", relative);
         var node = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllBytesAsync(path, token))!.AsObject();
         switch (fault)
@@ -313,6 +313,169 @@ public sealed class PostgresSoulCurrentIntegrationTests
         Assert.Equal(1, rejected.Exit); Assert.StartsWith("REJECTED:", rejected.Output, StringComparison.Ordinal);
         Assert.Equal(0, await fixture.AdvisoryLockCountAsync(true, token));
         Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("unlock-false")]
+    [InlineData("still-held")]
+    public async Task RealOwnerConnectionMustConfirmExactLockReleaseBeforeNormalAcknowledgement(string fault)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
+        await using var lease = await SoulCurrentOwnerLease.AcquireAsync(installation.ReadDatabaseConnection(false), fixture.Schema, fixture.Query.TenantRef, fixture.Query.SoulId, token);
+        // Test-only fault injection into the already acquired real backend, never a substitute lease/decision path.
+        var connection = (Npgsql.NpgsqlConnection)typeof(SoulCurrentOwnerLease).GetField("_connection", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(lease)!;
+        var sql = fault == "unlock-false" ? "SELECT pg_advisory_unlock(hashtextextended(@key, 0))" : "SELECT pg_advisory_lock(hashtextextended(@key, 0))";
+        await using (var command = new Npgsql.NpgsqlCommand(sql, connection))
+        { command.Parameters.AddWithValue("key", $"soul-current:{fixture.Query.TenantRef}:{fixture.Query.SoulId}"); await command.ExecuteNonQueryAsync(token); }
+        await Assert.ThrowsAsync<SoulRegistryException>(() => lease.ReleaseConfirmedAsync(token));
+        await lease.DisposeAsync();
+        Assert.Equal(0, await fixture.AdvisoryLockCountAsync(true, token));
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("EOF")]
+    [InlineData("CONCURRENT")]
+    [InlineData("AFTER_DISPOSE")]
+    public async Task SessionTerminalStateAndDisconnectCannotResumeOrLeakARealLease(string fault)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        using var host = await fixture.AcquireLeaseProcessAsync(token);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        if (fault == "EOF") host.Kill();
+        else { await host.StandardInput.WriteLineAsync(fault); await host.StandardInput.FlushAsync(token); }
+        await host.WaitForExitAsync(token); Assert.NotEqual(0, host.ExitCode);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(token); bounded.CancelAfter(6000);
+        while (await fixture.AdvisoryLockCountAsync(true, bounded.Token) != 0) await Task.Delay(10, bounded.Token);
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("sequence")]
+    [InlineData("duplicate")]
+    [InlineData("session")]
+    [InlineData("instance")]
+    [InlineData("query")]
+    [InlineData("configuration")]
+    [InlineData("bom")]
+    [InlineData("generation")]
+    [InlineData("deadline")]
+    [InlineData("connection")]
+    public async Task RealProviderRejectsSessionReplayTransferAndBindingChanges(string fault)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
+        using var deadline = new SoulCurrentDeadline(token);
+        using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+        await socket.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(Path.Combine(fixture.Root, "run/provider/service.sock")), deadline.Token);
+        SoulCurrentNative.RequirePeer((int)socket.Handle, (uint)fixture.Configuration.ProviderUid, (uint)fixture.Configuration.ProviderGid);
+        using var stream = new System.Net.Sockets.NetworkStream(socket, false);
+        var begin = new SoulCurrentLeaseSessionV1
+        {
+            ProducerModule = "control-plane-host", Phase = "acquire/begin", Query = fixture.Query, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce(),
+            InstanceId = Guid.NewGuid(), SessionId = "", Sequence = 1, ConfigurationSha256 = installation.ConfigurationSha256,
+            ReleaseBomSha256 = installation.Composition.ReleaseBomSha256, ReleaseGeneration = installation.Composition.ReleaseGeneration, ExpiresAt = deadline.ExpiresAt
+        };
+        await SoulCurrentLeaseSessionV1.WriteAsync(stream, begin, deadline.Token);
+        var challenge = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); begin.RequireResponse(challenge, "acquire/challenge", true);
+        var proof = await PossessionAsync(installation, fixture.Query, challenge.InstanceId, Guid.Parse(challenge.SessionId), deadline);
+        var complete = challenge with { Phase = "acquire/complete", ProducerModule = "control-plane-host", Sequence = 3, SigningBase64 = Convert.ToBase64String(proof.ToUtf8Json()) };
+        await SoulCurrentLeaseSessionV1.WriteAsync(stream, complete, deadline.Token);
+        var acquired = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); complete.RequireResponse(acquired, "acquire/acquired");
+        var request = acquired with { Phase = "revalidate/request", ProducerModule = "control-plane-host", Sequence = 5, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce(), StatusBase64 = "", ResolutionBase64 = "" };
+        request = fault switch
+        {
+            "sequence" => request with { Sequence = 7 },
+            "duplicate" => request with { RequestId = begin.RequestId, Nonce = begin.Nonce },
+            "session" => request with { SessionId = Guid.NewGuid().ToString("D") },
+            "instance" => request with { InstanceId = Guid.NewGuid() },
+            "query" => request with { Query = fixture.Query with { TraceId = "trace_" + new string('e', 32) } },
+            "configuration" => request with { ConfigurationSha256 = new string('e', 64) },
+            "bom" => request with { ReleaseBomSha256 = new string('e', 64) },
+            "generation" => request with { ReleaseGeneration = 2 },
+            "deadline" => request with { ExpiresAt = request.ExpiresAt.AddMilliseconds(1) },
+            _ => request
+        };
+        using var other = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+        if (fault == "connection") await other.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(Path.Combine(fixture.Root, "run/provider/service.sock")), deadline.Token);
+        using var destination = fault == "connection" ? new System.Net.Sockets.NetworkStream(other, false) : null;
+        var target = destination ?? stream;
+        await SoulCurrentLeaseSessionV1.WriteAsync(target, request, deadline.Token);
+        await Assert.ThrowsAsync<EndOfStreamException>(() => SoulCurrentLeaseSessionV1.ReadAsync(target, deadline.Token));
+        socket.Dispose();
+        using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(token); cleanup.CancelAfter(5000);
+        while (await fixture.AdvisoryLockCountAsync(true, cleanup.Token) != 0) await Task.Delay(10, cleanup.Token);
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("provider")]
+    [InlineData("host-auth")]
+    [InlineData("current")]
+    public async Task EachSoulRoleRejectsItsActuallyLoadedArtifactChangedAfterStartup(string role)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        Assert.Equal(0, (await fixture.ReadHostAsync(null, token)).Exit);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
+        using var deadline = new SoulCurrentDeadline(token);
+        var query = fixture.Query;
+        var instance = Guid.NewGuid(); var session = Guid.NewGuid();
+        var proof = role == "current" ? await PossessionAsync(installation, query, instance, session, deadline) : null;
+        File.SetLastWriteTimeUtc(Path.Combine(fixture.Root, "installation/releases/1/Dps.SoulRegistry.dll"), DateTime.UtcNow);
+        if (role == "provider") Assert.Equal(1, (await fixture.ReadHostAsync(null, token)).Exit);
+        else if (role == "host-auth")
+            await Assert.ThrowsAsync<ArgumentException>(() => PossessionAsync(installation, query, instance, session, deadline));
+        else await Assert.ThrowsAsync<SoulRegistryException>(() => new SoulCurrentSigningClient(installation).StatusAsync(query, instance, session, proof!, deadline));
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    // Same-UID synthetic adversary: obtains a real Host proof over the public envelope, then attacks the internal signer.
+    private static async Task<SoulCurrentSigningProtocolV1> PossessionAsync(SoulCurrentInstallation installation,
+        SoulCurrentQueryV1 query, Guid instance, Guid session, SoulCurrentDeadline deadline)
+    {
+        var request = new SoulCurrentSigningProtocolV1
+        {
+            Operation = "host-possession", MessageType = "challenge-request", RequestId = Guid.NewGuid(), InstanceId = instance, SessionId = session,
+            QueryBase64 = Convert.ToBase64String(query.ToUtf8Json()), QuerySha256 = query.ComputeSha256(), ConfigurationSha256 = installation.ConfigurationSha256,
+            ReleaseBomSha256 = installation.Composition.ReleaseBomSha256, ReleaseGeneration = installation.Composition.ReleaseGeneration, ExpiresAt = deadline.ExpiresAt,
+            ChallengeNonce = "", PossessionBase64 = "", StatusBase64 = "", ResolutionBase64 = "", ErrorCode = "", SignatureBase64 = ""
+        };
+        var envelope = new SoulCurrentLeaseSessionV1
+        {
+            ProducerModule = "control-plane-host", Phase = "acquire/possession-request", Query = query, RequestId = request.RequestId,
+            Nonce = SoulCurrentSigningClient.Nonce(), InstanceId = instance, SessionId = session.ToString("D"), Sequence = 1,
+            ConfigurationSha256 = request.ConfigurationSha256, ReleaseBomSha256 = request.ReleaseBomSha256, ReleaseGeneration = request.ReleaseGeneration,
+            ExpiresAt = request.ExpiresAt, SigningBase64 = Convert.ToBase64String(request.ToUtf8Json())
+        };
+        using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+        await socket.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(Path.Combine(installation.Location.SocketRoot, "host-auth/service.sock")), deadline.Token);
+        SoulCurrentNative.RequirePeer((int)socket.Handle, (uint)installation.Configuration.HostAuthUid, (uint)installation.Configuration.HostAuthGid);
+        using var stream = new System.Net.Sockets.NetworkStream(socket, false);
+        await SoulCurrentLeaseSessionV1.WriteAsync(stream, envelope, deadline.Token);
+        var challenge = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); envelope.RequireResponse(challenge, "acquire/possession-challenge");
+        var inner = SoulCurrentSigningProtocolV1.FromUtf8Json(Convert.FromBase64String(challenge.SigningBase64));
+        var answer = challenge with { Phase = "acquire/possession-answer", ProducerModule = "control-plane-host", Sequence = 3,
+            SigningBase64 = Convert.ToBase64String((inner with { MessageType = "answer" }).ToUtf8Json()) };
+        await SoulCurrentLeaseSessionV1.WriteAsync(stream, answer, deadline.Token);
+        var response = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); answer.RequireResponse(response, "acquire/possession-proof");
+        var proof = SoulCurrentSigningProtocolV1.FromUtf8Json(Convert.FromBase64String(response.SigningBase64));
+        SoulCurrentInstallation.Verify(installation.Configuration.HostAuthSpkiBase64, proof.CanonicalBytes(), proof.SignatureBase64); return proof;
     }
 
     private static SoulCurrentSigningProtocolV1 ChangeQueryCommitment(SoulCurrentSigningProtocolV1 request, SoulCurrentQueryV1 query) =>

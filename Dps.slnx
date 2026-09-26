@@ -41,6 +41,7 @@
   </Folder>
   <Folder Name="/Modules/control-plane-host/tests/">
     <Project Path="Modules/control-plane-host/tests/Dps.ControlPlaneHost.Tests/Dps.ControlPlaneHost.Tests.csproj" />
+    <Project Path="Modules/control-plane-host/tests/SoulCurrentHostProcess/Dps.SoulCurrent.HostFixture.csproj" />
   </Folder>
   <Folder Name="/Modules/device-registry/" />
   <Folder Name="/Modules/device-registry/contracts/">

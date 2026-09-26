@@ -15,21 +15,6 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
         }
       },
-      "dps.controlplanehost": {
-        "type": "Project",
-        "dependencies": {
-          "Dps.ControlPlaneHost.Contracts": "[0.4.0, )",
-          "Dps.PolicyApproval.Contracts": "[0.6.0, )",
-          "Dps.SoulRegistry": "[0.1.0, )",
-          "Npgsql": "[10.0.3, )"
-        }
-      },
-      "dps.controlplanehost.contracts": {
-        "type": "Project"
-      },
-      "dps.policyapproval.contracts": {
-        "type": "Project"
-      },
       "dps.soulregistry": {
         "type": "Project",
         "dependencies": {

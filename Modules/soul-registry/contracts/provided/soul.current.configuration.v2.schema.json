@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dps.local/contracts/soul.current.configuration.v2.schema.json",
+  "title": "soul.current.configuration/v2",
+  "description": "Untrusted installation data only. Native protection, cryptographic verification and fresh owner state are separate required checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "configuration_id",
+    "tenant_ref",
+    "soul_id",
+    "principal_id",
+    "consumer_module",
+    "permission",
+    "host_uid",
+    "host_gid",
+    "host_auth_uid",
+    "host_auth_gid",
+    "host_auth_key_id",
+    "host_auth_spki_base64",
+    "current_service_uid",
+    "current_service_gid",
+    "current_key_id",
+    "current_spki_base64",
+    "status_key_id",
+    "status_spki_base64",
+    "database_host",
+    "database_port",
+    "database_name",
+    "database_schema",
+    "database_runtime_role",
+    "database_secret_id",
+    "signer_database_runtime_role",
+    "signer_database_secret_id",
+    "deadline_ms",
+    "provider_uid",
+    "provider_gid"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0.0"
+    },
+    "contract_id": {
+      "const": "soul.current.configuration/v2"
+    },
+    "configuration_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\\s\\S])",
+      "format": "uuid",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "tenant_ref": {
+      "type": "string",
+      "pattern": "^tenant_[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "soul_id": {
+      "type": "string",
+      "pattern": "^soul_[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "principal_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$(?![\\s\\S])"
+    },
+    "consumer_module": {
+      "const": "control-plane-host"
+    },
+    "permission": {
+      "const": "soul-current.identity-read"
+    },
+    "host_uid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "host_gid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "host_auth_uid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "host_auth_gid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "host_auth_key_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$(?![\\s\\S])"
+    },
+    "host_auth_spki_base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{122}==$(?![\\s\\S])"
+    },
+    "current_service_uid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "current_service_gid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "current_key_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$(?![\\s\\S])"
+    },
+    "current_spki_base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{122}==$(?![\\s\\S])"
+    },
+    "status_key_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$(?![\\s\\S])"
+    },
+    "status_spki_base64": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{122}==$(?![\\s\\S])"
+    },
+    "database_host": {
+      "const": "127.0.0.1"
+    },
+    "database_port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "not": {
+        "const": 55434
+      }
+    },
+    "database_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])",
+      "not": {
+        "const": "dps_gbrain_company"
+      }
+    },
+    "database_schema": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+    },
+    "database_runtime_role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+    },
+    "database_secret_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+    },
+    "signer_database_runtime_role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+    },
+    "signer_database_secret_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+    },
+    "deadline_ms": {
+      "const": 5000
+    },
+    "provider_uid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    },
+    "provider_gid": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967294
+    }
+  }
+}

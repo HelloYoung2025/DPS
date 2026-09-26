@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05 Soul-current R3 quarantined four-role session
+
+- Remove the Host→Soul runtime factory import; use the Soul-owned closed AF_UNIX lease envelope for Host/provider and Host/host-auth traffic. Configuration v2 separates Host/provider identities while preserving v1 assets and signature bytes.
+- Verify actual role-loaded artifacts; keep all public entries fail-closed and production routing disabled. Independent Host/provider/two-signer synthetic launchers freeze their merged generation before startup.
+- Require fresh Host-bound final status and confirmed owner-backend unlock/close before ACK, then recheck budget/cancellation/signature windows. Bound failure cleanup without claiming uncontrolled remote tasks stopped.
+- Retain R1/R2 evidence, required P11 failure and all unrelated global gate obligations. This change does not award a verification level, finish P05/P06/P11 or authorize production.
+
 ### P05 Soul-current bounded R2 repairs
 
 - Reject effective column INSERT/UPDATE/REFERENCES and table MAINTAIN in the shared provider/signer SELECT-only check, including PUBLIC grants; add 12 real PostgreSQL permission/revoke/recovery regressions through the actual Host chain.

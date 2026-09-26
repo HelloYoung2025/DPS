@@ -7,34 +7,11 @@ namespace Dps.SoulRegistry;
 
 internal sealed class SoulCurrentSigningClient(SoulCurrentInstallation installation)
 {
-    internal async Task<SoulCurrentSigningProtocolV1> PossessionAsync(SoulCurrentQueryV1 query,
-        Guid instance, Guid session, SoulCurrentDeadline deadline)
-    {
-        var request = Request("host-possession", query, instance, session, deadline) with
-        { MessageType = "challenge-request", ChallengeNonce = "" };
-        using var socket = await ConnectAsync(true, deadline.Token);
-        using var stream = new NetworkStream(socket, false);
-        await WriteAsync(stream, request, deadline.Token);
-        var challenge = await ReadAsync(stream, deadline.Token);
-        RequireAssociation(request, challenge);
-        if (challenge.Operation != "host-possession" || challenge.MessageType != "challenge")
-            throw SoulCurrentInstallation.Unavailable();
-        var answer = challenge with { MessageType = "answer" };
-        await WriteAsync(stream, answer, deadline.Token);
-        var proof = await ReadAsync(stream, deadline.Token);
-        RequireAssociation(request, proof);
-        if (proof.Operation != "host-possession" || proof.MessageType != "proof" ||
-            proof.ChallengeNonce != challenge.ChallengeNonce) throw SoulCurrentInstallation.Unavailable();
-        SoulCurrentInstallation.Verify(installation.Configuration.HostAuthSpkiBase64, proof.CanonicalBytes(), proof.SignatureBase64);
-        deadline.RequireLive();
-        return proof;
-    }
-
     internal async Task<SoulCurrentStatusV1> StatusAsync(SoulCurrentQueryV1 query,
-        Guid instance, Guid session, SoulCurrentSigningProtocolV1 proof, SoulCurrentDeadline deadline)
+        Guid instance, Guid session, SoulCurrentSigningProtocolV1 proof, SoulCurrentDeadline deadline, Guid? requestId = null, string? nonce = null)
     {
         var request = Request("read-current-status", query, instance, session, deadline) with
-        { PossessionBase64 = Convert.ToBase64String(proof.ToUtf8Json()) };
+        { PossessionBase64 = Convert.ToBase64String(proof.ToUtf8Json()), RequestId = requestId ?? Guid.NewGuid(), ChallengeNonce = nonce ?? Nonce() };
         var response = await ExchangeAsync(request, deadline);
         var state = SoulCurrentStatusV1.FromUtf8Json(Convert.FromBase64String(response.StatusBase64));
         RequireStatus(state, query, instance, session, request.RequestId, request.ChallengeNonce);

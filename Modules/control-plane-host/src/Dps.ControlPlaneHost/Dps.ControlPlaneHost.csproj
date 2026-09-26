@@ -6,13 +6,14 @@
     <RootNamespace>Dps.ControlPlaneHost</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../../soul-registry/src/Dps.SoulRegistry.csproj" />
+    <ProjectReference Include="../../../soul-registry/contracts/Dps.SoulRegistry.Contracts.csproj" />
     <PackageReference Include="Npgsql" />
     <ProjectReference Include="../../contracts/Dps.ControlPlaneHost.Contracts/Dps.ControlPlaneHost.Contracts.csproj" />
     <ProjectReference Include="../../../policy-approval/contracts/provided/Dps.PolicyApproval.Contracts/Dps.PolicyApproval.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Dps.ControlPlaneHost.Tests" />
+    <InternalsVisibleTo Include="Dps.SoulCurrent.HostFixture" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../migrations/001_create_control_plane_truth.sql"

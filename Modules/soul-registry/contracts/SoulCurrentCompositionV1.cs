@@ -370,7 +370,7 @@ internal static class SoulCurrentFormat
     internal static JsonElement Parse(ReadOnlySpan<byte> bytes, string[] fields, string contract)
     {
         var root = SoulIdentityWire.Parse(bytes, fields);
-        SoulIdentityWire.Exact(root, "schema_version", "1.0.0");
+        SoulIdentityWire.Exact(root, "schema_version", contract == SoulCurrentConfigurationV2.ContractId ? "2.0.0" : "1.0.0");
         SoulIdentityWire.Exact(root, "contract_id", contract);
         foreach (var property in root.EnumerateObject())
         {
@@ -407,7 +407,7 @@ internal static class SoulCurrentFormat
         if (root.TryGetProperty("status", out _) && SoulIdentityWire.Text(root, "status") is not ("ACTIVE" or "REVOKED"))
             throw new ArgumentException("Unknown authority status.");
         if (root.TryGetProperty("signature_algorithm", out _)) SoulIdentityWire.Exact(root, "signature_algorithm", SoulIdentityWire.Algorithm);
-        if (contract == SoulCurrentConfigurationV1.ContractId)
+        if (contract is SoulCurrentConfigurationV1.ContractId or SoulCurrentConfigurationV2.ContractId)
         {
             SoulIdentityWire.Exact(root, "consumer_module", "control-plane-host");
             // Only local, explicitly port-bound PostgreSQL is supported by this closed slice.

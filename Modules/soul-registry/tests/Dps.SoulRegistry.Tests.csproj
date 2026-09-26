@@ -10,7 +10,10 @@
 
   <ItemGroup>
     <Compile Remove="SignerProcess/**/*.cs" />
+    <ProjectReference Include="../../control-plane-host/tests/SoulCurrentHostProcess/Dps.SoulCurrent.HostFixture.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="SignerProcess/Dps.SoulCurrent.SignerFixture.csproj" ReferenceOutputAssembly="false" />
+    <EmbeddedResource Include="../contracts/corpus/soul.current.configuration.v2.corpus.json" LogicalName="soul.current.configuration.v2.corpus.json" />
+    <EmbeddedResource Include="../contracts/corpus/soul.current.lease.session.v1.corpus.json" LogicalName="soul.current.lease.session.v1.corpus.json" />
     <EmbeddedResource Include="../contracts/corpus/soul.current.composition.v1.corpus.json" LogicalName="soul.current.composition.v1.corpus.json" />
     <EmbeddedResource Include="../contracts/provided/soul.identity.v1.corpus.json" LogicalName="soul.identity.v1.corpus.json" />
     <EmbeddedResource Include="fixtures/legacy-receipts/*.json" />

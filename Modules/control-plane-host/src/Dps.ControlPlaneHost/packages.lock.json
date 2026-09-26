@@ -30,13 +30,6 @@
       "dps.policyapproval.contracts": {
         "type": "Project"
       },
-      "dps.soulregistry": {
-        "type": "Project",
-        "dependencies": {
-          "Dps.SoulRegistry.Contracts": "[0.1.0, )",
-          "Npgsql": "[10.0.3, )"
-        }
-      },
       "dps.soulregistry.contracts": {
         "type": "Project"
       }

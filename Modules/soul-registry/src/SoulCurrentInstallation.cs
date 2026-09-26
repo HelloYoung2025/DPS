@@ -24,7 +24,7 @@ internal sealed class SoulCurrentInstallation
 {
     internal SoulInstallationLocation Location { get; }
     internal SoulCurrentBootstrapV1 Bootstrap { get; }
-    internal SoulCurrentConfigurationV1 Configuration { get; }
+    internal SoulCurrentConfigurationV2 Configuration { get; }
     internal SoulCurrentCompositionV1 Composition { get; }
     internal string ConfigurationSha256 { get; }
     private readonly byte[] _bootstrapBytes;
@@ -35,7 +35,7 @@ internal sealed class SoulCurrentInstallation
     {
         Location = location; _bootstrapBytes = bootstrap; _compositionBytes = composition;
         Bootstrap = SoulCurrentBootstrapV1.FromUtf8Json(bootstrap);
-        Configuration = SoulCurrentConfigurationV1.FromUtf8Json(configuration);
+        Configuration = SoulCurrentConfigurationV2.FromUtf8Json(configuration);
         Composition = SoulCurrentCompositionV1.FromUtf8Json(composition);
         ConfigurationSha256 = Hash(configuration);
         if (!Bootstrap.Enabled || Bootstrap.ActiveConfigurationSha256 != ConfigurationSha256 ||
@@ -51,7 +51,7 @@ internal sealed class SoulCurrentInstallation
         Verify(Bootstrap.RootSpkiBase64, Composition.CanonicalBytes(), Composition.SignatureBase64);
         RequireWindow(Composition.IssuedAt, Composition.ExpiresAt);
         if (location.SyntheticBoundary is null &&
-            new[] { Configuration.HostUid, Configuration.HostAuthUid, Configuration.CurrentServiceUid }.Distinct().Count() != 3)
+            new[] { Configuration.HostUid, Configuration.ProviderUid, Configuration.HostAuthUid, Configuration.CurrentServiceUid }.Distinct().Count() != 4)
             throw Unavailable();
     }
 
@@ -59,7 +59,7 @@ internal sealed class SoulCurrentInstallation
     {
         RequirePlatform();
         return new SoulCurrentInstallation(location, Read(location, "bootstrap.v1.json"),
-            Read(location, "configuration.v1.json"), Read(location, "composition.v1.json"));
+            Read(location, "configuration.v2.json"), Read(location, "composition.v1.json"));
     }
 
     internal void Revalidate()
@@ -93,7 +93,7 @@ internal sealed class SoulCurrentInstallation
     internal string ReadDatabaseConnection(bool signer)
     {
         var c = Configuration;
-        var uid = signer ? c.CurrentServiceUid : c.HostUid;
+        var uid = signer ? c.CurrentServiceUid : c.ProviderUid;
         if (SoulCurrentNative.geteuid() != uid) throw Unavailable();
         var secret = Read(Location, "secrets/" + (signer ? c.SignerDatabaseSecretId : c.DatabaseSecretId),
             checked((uint)uid), true);
@@ -103,7 +103,7 @@ internal sealed class SoulCurrentInstallation
         {
             Host = c.DatabaseHost, Port = checked((int)c.DatabasePort), Database = c.DatabaseName,
             Username = signer ? c.SignerDatabaseRuntimeRole : c.DatabaseRuntimeRole,
-            Password = password, Pooling = false, Timeout = 5, CommandTimeout = 5,
+            Password = password, Pooling = false, Timeout = 5, CommandTimeout = 5, CancellationTimeout = 500,
             IncludeErrorDetail = false, ApplicationName = signer ? "dps-soul-current-signer" : "dps-soul-current-provider"
         }.ConnectionString;
     }
@@ -134,11 +134,7 @@ internal sealed class SoulCurrentInstallation
 
     internal void VerifyLoadedArtifacts()
     {
-        var host = AssemblyLoadContext.Default.Assemblies.SingleOrDefault(a => a.GetName().Name == "Dps.ControlPlaneHost")
-            ?? throw Unavailable();
-        if (host.GetType("Dps.ControlPlaneHost.ControlPlaneSoulCurrentComposition", false) is null) throw Unavailable();
-        VerifyAssembly(host, "Dps.ControlPlaneHost", Composition.HostArtifactSha256);
-        VerifyAssembly(typeof(SoulCurrentComposition).Assembly, "Dps.SoulRegistry", Composition.SoulArtifactSha256);
+        VerifyAssembly(typeof(SoulCurrentAuthority).Assembly, "Dps.SoulRegistry", Composition.SoulArtifactSha256);
         VerifyAssembly(typeof(SoulCurrentQueryV1).Assembly, "Dps.SoulRegistry.Contracts", Composition.ContractsArtifactSha256);
     }
 
