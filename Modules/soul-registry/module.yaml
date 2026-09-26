@@ -227,7 +227,7 @@
         "id": "soul-registry.unit",
         "type": "unit",
         "required": true,
-        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Unit --minimum-expected-tests 1 --fail-skips on",
+        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --configuration Release --no-restore --filter-trait Category=Unit --minimum-expected-tests 1 --fail-skips on",
         "environment": "macos-or-hosted",
         "evidenceLevel": "REPOSITORY_STATIC_VERIFIED"
       },
@@ -235,7 +235,7 @@
         "id": "soul-registry.contract",
         "type": "contract",
         "required": true,
-        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Contract --minimum-expected-tests 1 --fail-skips on",
+        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --configuration Release --no-restore --filter-trait Category=Contract --minimum-expected-tests 1 --fail-skips on",
         "environment": "macos-or-hosted complete original Contract suite plus strict identity corpus, canonical commitments and synthetic signature mathematics; no production authority claim",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
@@ -244,14 +244,14 @@
         "type": "contract",
         "required": true,
         "command": "python3.12 -m unittest discover -s Modules/soul-registry/tests -p test_soul_identity_schemas.py",
-        "environment": "locked requirements-ci.txt Draft 2020-12 with active format checking; original six methods and owner corpus 411 retained, plus two installation/protocol schema methods and 131 shared composition cases",
+        "environment": "locked requirements-ci.txt Draft 2020-12 with active format checking; original six methods and owner corpus 411 retained, plus two installation/protocol schema methods and 132 shared composition cases",
         "evidenceLevel": "CONTRACT_VERIFIED"
       },
       {
         "id": "soul-registry.integration",
         "type": "integration",
         "required": true,
-        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests --configuration Release --no-restore --filter-trait Category=Integration --minimum-expected-tests 1 --fail-skips on",
+        "command": "scripts/dotnet-pinned.sh restore Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --locked-mode && scripts/dotnet-pinned.sh test --project Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj --configuration Release --no-restore --filter-trait Category=Integration --minimum-expected-tests 1 --fail-skips on",
         "environment": "real isolated PostgreSQL 18.4; synthetic test-owned issuer only; retained Soul-to-Ledger v1 positive path remains required; macOS native protection and separate synthetic signer/Host processes exercise real product composition, crypto and distinct SELECT-only PG roles; same UID is not production isolation",
         "evidenceLevel": "INTEGRATION_VERIFIED"
       }

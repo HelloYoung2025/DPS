@@ -5,6 +5,45 @@ namespace Dps.SoulRegistry.Tests;
 
 public sealed class PostgresSoulCurrentIntegrationTests
 {
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("provider", "INSERT")]
+    [InlineData("provider", "UPDATE")]
+    [InlineData("provider", "REFERENCES")]
+    [InlineData("provider", "MAINTAIN")]
+    [InlineData("signer", "INSERT")]
+    [InlineData("signer", "UPDATE")]
+    [InlineData("signer", "REFERENCES")]
+    [InlineData("signer", "MAINTAIN")]
+    [InlineData("PUBLIC", "INSERT")]
+    [InlineData("PUBLIC", "UPDATE")]
+    [InlineData("PUBLIC", "REFERENCES")]
+    [InlineData("PUBLIC", "MAINTAIN")]
+    public async Task ActualHostRejectsEffectiveNonSelectPrivilegeAndRecoversAfterRevoke(string grantee, string privilege)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        Assert.Equal(0, (await fixture.ReadHostAsync(null, token)).Exit);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var roles = grantee == "PUBLIC" ? new[] { false, true } : new[] { grantee == "signer" };
+        foreach (var signer in roles) Assert.False(await fixture.HasRuntimePrivilegeAsync(signer, privilege, token));
+        await fixture.SetRuntimePrivilegeAsync(grantee, privilege, true, token);
+        try
+        {
+            foreach (var signer in roles) Assert.True(await fixture.HasRuntimePrivilegeAsync(signer, privilege, token));
+            // PUBLIC is effective for both logins; provider-first refusal is not signer execution evidence.
+            var result = await fixture.ReadHostAsync(null, token);
+            Assert.Equal(1, result.Exit);
+            Assert.StartsWith("REJECTED:", result.Output, StringComparison.Ordinal);
+            Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+        }
+        finally { await fixture.SetRuntimePrivilegeAsync(grantee, privilege, false, CancellationToken.None); }
+        foreach (var signer in roles) Assert.False(await fixture.HasRuntimePrivilegeAsync(signer, privilege, token));
+        Assert.Equal(0, (await fixture.ReadHostAsync(null, token)).Exit);
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public async Task IndependentSignersAndActualHostReadReturnScopedAsOfWithoutWrites()

@@ -136,7 +136,10 @@
     },
     "database_name": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])"
+      "pattern": "^[a-z][a-z0-9_]{0,62}$(?![\\s\\S])",
+      "not": {
+        "const": "dps_gbrain_company"
+      }
     },
     "database_schema": {
       "type": "string",

@@ -207,6 +207,7 @@
   </Folder>
   <Folder Name="/Modules/soul-registry/tests/">
     <Project Path="Modules/soul-registry/tests/Dps.SoulRegistry.Tests.csproj" />
+    <Project Path="Modules/soul-registry/tests/SignerProcess/Dps.SoulCurrent.SignerFixture.csproj" />
   </Folder>
   <Folder Name="/Modules/windows-edge-supervisor/" />
   <Folder Name="/Modules/windows-edge-supervisor/contracts/" />

@@ -107,7 +107,7 @@ class SoulIdentitySchemaTests(unittest.TestCase):
 class SoulCurrentInstallationSchemaTests(unittest.TestCase):
     def test_current_installation_schema_and_corpus(self):
         corpus = load(PROVIDED.parent / "corpus" / "soul.current.composition.v1.corpus.json")
-        self.assertEqual(len(corpus["cases"]), 131)
+        self.assertEqual(len(corpus["cases"]), 132)
         self.assertEqual(corpus["inventory"], [case["id"] for case in corpus["cases"]])
         protocol = load(PROVIDED / "soul.current.signing-protocol.v1.schema.json")
         for case in corpus["cases"]:

@@ -413,6 +413,7 @@ internal static class SoulCurrentFormat
             // Only local, explicitly port-bound PostgreSQL is supported by this closed slice.
             if (SoulIdentityWire.Text(root, "database_host") != "127.0.0.1" ||
                 SoulIdentityWire.Integer(root, "database_port") is < 1024 or > 65535 or 55434 ||
+                SoulIdentityWire.Text(root, "database_name") == "dps_gbrain_company" ||
                 SoulIdentityWire.Integer(root, "deadline_ms") != 5000)
                 throw new ArgumentException("Unsupported database target or deadline.");
             foreach (var n in new[] { "database_name", "database_schema", "database_runtime_role", "signer_database_runtime_role", "database_secret_id", "signer_database_secret_id" })

@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05 Soul-current bounded R2 repairs
+
+- Reject effective column INSERT/UPDATE/REFERENCES and table MAINTAIN in the shared provider/signer SELECT-only check, including PUBLIC grants; add 12 real PostgreSQL permission/revoke/recovery regressions through the actual Host chain.
+- Reject the reserved GBrain database name in both the strict configuration decoder and schema; retain the original 131 composition cases and add one shared rejection case.
+- Register the existing signer fixture in the solution and name the original Soul test project explicitly in all three required .NET suite commands without changing categories or floors.
+- Host-to-Soul runtime composition governance, signer artifact coverage, P11 and global gate obligations remain unfinished; these repairs do not activate production or issue a verification level.
+
 ### Control Plane Host PostgreSQL catalog attestation
 
 - Rename the column-collation query alias so PostgreSQL 18.4 can parse runtime schema attestation without changing catalog, ACL, or runtime-role requirements.

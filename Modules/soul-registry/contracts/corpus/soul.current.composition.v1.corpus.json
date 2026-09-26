@@ -132,7 +132,8 @@
     "soul.current.signing-protocol.missing.signature_base64",
     "soul.current.signing-protocol.unknown",
     "soul.current.signing-protocol.duplicate",
-    "soul.current.signing-protocol.missing.query_sha256"
+    "soul.current.signing-protocol.missing.query_sha256",
+    "soul.current.configuration.reserved-database"
   ],
   "cases": [
     {
@@ -3683,6 +3684,43 @@
         "resolution_base64": "",
         "error_code": "",
         "signature_base64": ""
+      },
+      "codec_expected": false,
+      "schema_expected": false
+    },
+    {
+      "id": "soul.current.configuration.reserved-database",
+      "contract_id": "soul.current.configuration/v1",
+      "payload": {
+        "schema_version": "1.0.0",
+        "contract_id": "soul.current.configuration/v1",
+        "configuration_id": "11111111-1111-1111-1111-111111111111",
+        "tenant_ref": "tenant_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "principal_id": "principal_id",
+        "consumer_module": "control-plane-host",
+        "permission": "soul-current.identity-read",
+        "host_uid": 1,
+        "host_gid": 1,
+        "host_auth_uid": 1,
+        "host_auth_gid": 1,
+        "host_auth_key_id": "host-auth-key-id",
+        "host_auth_spki_base64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESMOJe4bAwZYN0dDf8Fg21C0h8g+0XF5UzU8V6oqYIppaUnsWbmbAh3BqIIEsAbAGqv7qFSrZ9T/+W5RnOIBOIQ==",
+        "current_service_uid": 1,
+        "current_service_gid": 1,
+        "current_key_id": "current-key-id",
+        "current_spki_base64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELuQtp++IojJCd1494BlFstSebf/49bDzQ2pHf6oDsKE7UhotoNb6SVrB3g0S74TG9t9wfxSO0OKLCfl9IO9AXQ==",
+        "status_key_id": "status-key-id",
+        "status_spki_base64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4Ow1MblNZpZjS8xaXUzrRjqKlkd6Lol51Fu+zdZeHYu9ykAPSGmGM/eCe0rit+18lEOYHBbyLD64iySt5qQEQg==",
+        "database_host": "127.0.0.1",
+        "database_port": 55000,
+        "database_name": "dps_gbrain_company",
+        "database_schema": "database_schema",
+        "database_runtime_role": "database_runtime_role",
+        "database_secret_id": "database_secret_id",
+        "signer_database_runtime_role": "signer_database_runtime_role",
+        "signer_database_secret_id": "signer_database_secret_id",
+        "deadline_ms": 5000
       },
       "codec_expected": false,
       "schema_expected": false

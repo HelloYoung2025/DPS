@@ -110,7 +110,7 @@ public sealed class SoulCurrentCompositionTests
         using var stream = typeof(SoulCurrentCompositionTests).Assembly.GetManifestResourceStream("soul.current.composition.v1.corpus.json")!;
         using var document = System.Text.Json.JsonDocument.Parse(stream);
         var cases = document.RootElement.GetProperty("cases").EnumerateArray().ToArray();
-        Assert.Equal(131, cases.Length);
+        Assert.Equal(132, cases.Length);
         Assert.Equal(cases.Select(c => c.GetProperty("id").GetString()), document.RootElement.GetProperty("inventory").EnumerateArray().Select(c => c.GetString()));
         foreach (var test in cases)
         {

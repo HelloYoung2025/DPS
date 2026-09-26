@@ -225,6 +225,36 @@ public sealed class SoulCurrentProcessFixture : IAsyncDisposable
         command.Parameters.AddWithValue("role", _providerRole);
         if (await command.ExecuteScalarAsync(token) is not true) throw new InvalidOperationException("No owned provider session.");
     }
+    public async Task SetRuntimePrivilegeAsync(string grantee, string privilege, bool grant, CancellationToken token)
+    {
+        var role = grantee switch { "provider" => _providerRole, "signer" => _signerRole, "PUBLIC" => "PUBLIC", _ => throw new ArgumentException("Unknown test role.") };
+        var permission = privilege switch
+        {
+            "INSERT" or "UPDATE" or "REFERENCES" => privilege + " (status)",
+            "MAINTAIN" => privilege,
+            _ => throw new ArgumentException("Unknown test privilege.")
+        };
+        await using var connection = new NpgsqlConnection(_ownerConnection); await connection.OpenAsync(token);
+        await using var command = new NpgsqlCommand($"{(grant ? "GRANT" : "REVOKE")} {permission} ON {Schema}.soul_current_state {(grant ? "TO" : "FROM")} {role}", connection);
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    public async Task<bool> HasRuntimePrivilegeAsync(bool signer, string privilege, CancellationToken token)
+    {
+        var function = privilege switch
+        {
+            "INSERT" or "UPDATE" or "REFERENCES" => "has_column_privilege(@role, @table, 'status', @privilege)",
+            "MAINTAIN" => "has_table_privilege(@role, @table, @privilege)",
+            _ => throw new ArgumentException("Unknown test privilege.")
+        };
+        await using var connection = new NpgsqlConnection(_ownerConnection); await connection.OpenAsync(token);
+        await using var command = new NpgsqlCommand("SELECT " + function, connection);
+        command.Parameters.AddWithValue("role", signer ? _signerRole : _providerRole);
+        command.Parameters.AddWithValue("table", Schema + ".soul_current_state");
+        command.Parameters.AddWithValue("privilege", privilege);
+        return (bool)(await command.ExecuteScalarAsync(token))!;
+    }
+
     public async Task<string> DeniedRuntimeWriteAsync(bool signer, CancellationToken token)
     {
         var location = new SoulInstallationLocation(Path.Combine(Root, "installation"), Path.Combine(Root, "run"), SoulCurrentNative.geteuid(), Root);
