@@ -2,8 +2,16 @@
 
 ## [Unreleased] - 2026-09-14
 
+### U4 local integration: P05 R4 into U3
+- Merge the frozen P05 R4 evidence supplement `1f991fa` into the frozen U3 integration head `f91d1dc` (first parent). Only frozen lines are merged; product behavior does not change; this does not authorize release or activation.
+
 ### P04 repair and P05 R3 local integration
 - Merge the frozen P05 R3 Soul-current line `5ab9aab` (first parent) with the frozen P04 repair integration `4d19d3f` as a local construction baseline. Product behavior does not change; both lines' unfinished acceptance, retained failures and null formal verification remain; release and activation are not authorized.
+
+### P05 Soul-current R4 evidence supplement
+
+- Add tests only: both signer public Opens reject with `AUTHORITY_UNAVAILABLE`; Host EOF or pipelined bytes while the real provider waits on the PG lock, the current signer or release yields no `acquire/acquired` or `dispose/ack`; a lost unlock or readback result on a real owner connection cannot confirm release.
+- Product source, contracts, fixtures, manifests and suite floors are unchanged. The required P11 failure and all R3 limits remain; this does not award a verification level or authorize production.
 
 ### P05 Soul-current R3 quarantined four-role session
 

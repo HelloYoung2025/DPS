@@ -340,6 +340,29 @@ public sealed class PostgresSoulCurrentIntegrationTests
 
     [Theory]
     [Trait("Category", "Integration")]
+    [InlineData("unlock")]
+    [InlineData("readback")]
+    public async Task RealOwnerConnectionLostReleaseResultCannotConfirmRelease(string lost)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
+        await using var bridge = new ReleaseResultDroppingBridge(checked((int)fixture.Configuration.DatabasePort), lost);
+        // Only the endpoint changes (plaintext, so the bridge sees statement boundaries): the real provider login and real backend execute the release statements.
+        var connection = new Npgsql.NpgsqlConnectionStringBuilder(installation.ReadDatabaseConnection(false)) { Port = bridge.Port, SslMode = Npgsql.SslMode.Disable }.ConnectionString;
+        await using var lease = await SoulCurrentOwnerLease.AcquireAsync(connection, fixture.Schema, fixture.Query.TenantRef, fixture.Query.SoulId, token);
+        await Assert.ThrowsAnyAsync<Npgsql.NpgsqlException>(() => lease.ReleaseConfirmedAsync(token));
+        Assert.True(bridge.DroppedCompletedResult);
+        await lease.DisposeAsync();
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(token); bounded.CancelAfter(5000);
+        while (await fixture.AdvisoryLockCountAsync(true, bounded.Token) != 0) await Task.Delay(10, bounded.Token);
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
     [InlineData("EOF")]
     [InlineData("CONCURRENT")]
     [InlineData("AFTER_DISPOSE")]
@@ -355,6 +378,88 @@ public sealed class PostgresSoulCurrentIntegrationTests
         await host.WaitForExitAsync(token); Assert.NotEqual(0, host.ExitCode);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(token); bounded.CancelAfter(6000);
         while (await fixture.AdvisoryLockCountAsync(true, bounded.Token) != 0) await Task.Delay(10, bounded.Token);
+        Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("lock", "EOF")]
+    [InlineData("lock", "PIPELINE")]
+    [InlineData("sign", "EOF")]
+    [InlineData("sign", "PIPELINE")]
+    [InlineData("release", "EOF")]
+    [InlineData("release", "PIPELINE")]
+    public async Task RealProviderRejectsHostEofOrPipelinedBytesWhileLockSignOrReleaseIsInFlight(string window, string stimulus)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var fixture = await SoulCurrentProcessFixture.CreateAsync(token);
+        var before = await fixture.BusinessSnapshotAsync(token);
+        var installation = SoulCurrentInstallation.Load(new SoulInstallationLocation(Path.Combine(fixture.Root, "installation"), Path.Combine(fixture.Root, "run"), SoulCurrentNative.geteuid(), fixture.Root));
+        var admin = new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("DPS_TEST_POSTGRES") ?? throw new InvalidOperationException("DPS_TEST_POSTGRES required."))
+        { Database = fixture.Configuration.DatabaseName, Pooling = false }.ConnectionString;
+        await using var holder = new Npgsql.NpgsqlConnection(admin);
+        var stopped = 0;
+        try
+        {
+            using var deadline = new SoulCurrentDeadline(token);
+            using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+            await socket.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(Path.Combine(fixture.Root, "run/provider/service.sock")), deadline.Token);
+            SoulCurrentNative.RequirePeer((int)socket.Handle, (uint)fixture.Configuration.ProviderUid, (uint)fixture.Configuration.ProviderGid);
+            using var stream = new System.Net.Sockets.NetworkStream(socket, false);
+            var begin = new SoulCurrentLeaseSessionV1
+            {
+                ProducerModule = "control-plane-host", Phase = "acquire/begin", Query = fixture.Query, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce(),
+                InstanceId = Guid.NewGuid(), SessionId = "", Sequence = 1, ConfigurationSha256 = installation.ConfigurationSha256,
+                ReleaseBomSha256 = installation.Composition.ReleaseBomSha256, ReleaseGeneration = installation.Composition.ReleaseGeneration, ExpiresAt = deadline.ExpiresAt
+            };
+            await SoulCurrentLeaseSessionV1.WriteAsync(stream, begin, deadline.Token);
+            var challenge = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); begin.RequireResponse(challenge, "acquire/challenge", true);
+            var proof = await PossessionAsync(installation, fixture.Query, challenge.InstanceId, Guid.Parse(challenge.SessionId), deadline);
+            var complete = challenge with { Phase = "acquire/complete", ProducerModule = "control-plane-host", Sequence = 3, SigningBase64 = Convert.ToBase64String(proof.ToUtf8Json()) };
+            // Pipelined bytes are a well-formed next request written without waiting for the response.
+            var next = complete with { Phase = "revalidate/request", Sequence = 5, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce(), SigningBase64 = "" };
+            if (window == "lock")
+            {
+                await holder.OpenAsync(token);
+                await using var take = new Npgsql.NpgsqlCommand("SELECT pg_advisory_lock(hashtextextended(@key, 0))", holder);
+                take.Parameters.AddWithValue("key", $"soul-current:{fixture.Query.TenantRef}:{fixture.Query.SoulId}"); await take.ExecuteNonQueryAsync(token);
+            }
+            // Test-only stall of this unit's own current-signer child or PG backend; always resumed.
+            if (window == "sign") { stopped = fixture.SignerProcessIds[1]; Signal(stopped, SigStop); }
+            await SoulCurrentLeaseSessionV1.WriteAsync(stream, complete, deadline.Token);
+            if (window == "release")
+            {
+                var acquired = await SoulCurrentLeaseSessionV1.ReadAsync(stream, deadline.Token); complete.RequireResponse(acquired, "acquire/acquired");
+                stopped = await ProviderLeaseBackendAsync(admin, fixture.Configuration.DatabaseRuntimeRole, false, token);
+                Assert.NotEqual(0, stopped); Signal(stopped, SigStop);
+                var dispose = acquired with { Phase = "dispose/request", ProducerModule = "control-plane-host", Sequence = 5, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce(), StatusBase64 = "", ResolutionBase64 = "" };
+                await SoulCurrentLeaseSessionV1.WriteAsync(stream, dispose, deadline.Token);
+                next = dispose with { Phase = "revalidate/request", Sequence = 7, RequestId = Guid.NewGuid(), Nonce = SoulCurrentSigningClient.Nonce() };
+                // In flight by construction only: release waits on the stopped backend; nothing observable exists without a fixture change.
+                await Task.Delay(300, token);
+            }
+            else
+            {
+                // Observed in flight: provider waits for the held lock, or its lease backend is idle after the alias read (next step: signer RPC).
+                using var observed = CancellationTokenSource.CreateLinkedTokenSource(token); observed.CancelAfter(3000);
+                while (window == "lock" ? await fixture.AdvisoryLockCountAsync(false, observed.Token) == 0
+                    : await ProviderLeaseBackendAsync(admin, fixture.Configuration.DatabaseRuntimeRole, true, observed.Token) == 0) await Task.Delay(10, observed.Token);
+            }
+            if (stimulus == "EOF") socket.Shutdown(System.Net.Sockets.SocketShutdown.Send);
+            else await SoulCurrentLeaseSessionV1.WriteAsync(stream, next, deadline.Token);
+            using var read = CancellationTokenSource.CreateLinkedTokenSource(token); read.CancelAfter(8000);
+            var outcome = SoulCurrentLeaseSessionV1.ReadAsync(stream, read.Token);
+            await Task.WhenAny(outcome, Task.Delay(window == "release" ? 700 : 1000, token));
+            // Let the stalled operation complete; only an already aborted session keeps it from becoming a result.
+            if (window == "lock") await holder.CloseAsync();
+            else { Signal(stopped, SigContinue); stopped = 0; }
+            try { Assert.Fail("Provider returned " + (await outcome).Phase + " after " + stimulus + " during in-flight " + window + "."); }
+            catch (EndOfStreamException) { }
+        }
+        finally { if (stopped != 0) _ = kill(stopped, SigContinue); }
+        using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(token); cleanup.CancelAfter(6000);
+        while (await fixture.AdvisoryLockCountAsync(true, cleanup.Token) != 0) await Task.Delay(10, cleanup.Token);
         Assert.Equal(before, await fixture.BusinessSnapshotAsync(token));
     }
 
@@ -496,5 +601,114 @@ public sealed class PostgresSoulCurrentIntegrationTests
         Assert.True(bytes.Length >= 4);
         Assert.Equal(bytes.Length - 4, checked((int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes)));
         return bytes[4..];
+    }
+
+    // Darwin signal numbers. Only this fixture's own current-signer child or its disposable-PG provider backend is signalled.
+    private const int SigStop = 17, SigContinue = 19;
+    private static void Signal(int pid, int signal) => Assert.Equal(0, kill(pid, signal));
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libSystem.B.dylib", SetLastError = true)] private static extern int kill(int pid, int sig);
+
+    // The provider login's backend holding the Soul advisory lock; afterAlias also requires it idle after the alias read.
+    private static async Task<int> ProviderLeaseBackendAsync(string admin, string role, bool afterAlias, CancellationToken token)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(admin); await connection.OpenAsync(token);
+        await using var command = new Npgsql.NpgsqlCommand("""
+            SELECT a.pid FROM pg_catalog.pg_stat_activity a JOIN pg_catalog.pg_locks l ON l.pid = a.pid
+            WHERE a.datname = current_database() AND a.usename = @role AND l.locktype = 'advisory' AND l.granted
+              AND (NOT @after OR (a.state = 'idle' AND a.query LIKE '%identity_authority_aliases%'))
+            """, connection);
+        command.Parameters.AddWithValue("role", role); command.Parameters.AddWithValue("after", afterAlias);
+        return await command.ExecuteScalarAsync(token) is int pid ? pid : 0;
+    }
+
+    // Test-owned loopback bridge to this unit's PostgreSQL only: forwards the real release statement to the server,
+    // then withholds its completed result from Npgsql and closes the client side, so the result is lost on the wire.
+    private sealed class ReleaseResultDroppingBridge : IAsyncDisposable
+    {
+        private readonly int _postgresPort;
+        private readonly string _lost;
+        private readonly System.Net.Sockets.TcpListener _listener = new(System.Net.IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _stop = new();
+        private readonly System.Collections.Concurrent.ConcurrentBag<Task> _bridges = [];
+        private readonly Task _accept;
+        private int _dropped;
+        internal int Port => ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
+        internal bool DroppedCompletedResult => Volatile.Read(ref _dropped) == 1;
+
+        internal ReleaseResultDroppingBridge(int postgresPort, string lost)
+        {
+            _postgresPort = postgresPort; _lost = lost;
+            _listener.Start();
+            _accept = AcceptAsync();
+        }
+
+        private async Task AcceptAsync()
+        {
+            try
+            {
+                while (!_stop.IsCancellationRequested)
+                    _bridges.Add(BridgeAsync(await _listener.AcceptTcpClientAsync(_stop.Token)));
+            }
+            catch (OperationCanceledException) { }
+            catch (System.Net.Sockets.SocketException) when (_stop.IsCancellationRequested) { }
+        }
+
+        private async Task BridgeAsync(System.Net.Sockets.TcpClient client)
+        {
+            using (client)
+            using (var backend = new System.Net.Sockets.TcpClient())
+            {
+                try
+                {
+                    await backend.ConnectAsync(System.Net.IPAddress.Loopback, _postgresPort, _stop.Token);
+                    var clientStream = client.GetStream(); var serverStream = backend.GetStream();
+                    var withhold = 0;
+                    async Task Outbound()
+                    {
+                        var buffer = new byte[8192]; var tail = ""; var sawUnlock = false;
+                        while (true)
+                        {
+                            var count = await clientStream.ReadAsync(buffer, _stop.Token);
+                            if (count == 0) return;
+                            var text = tail + System.Text.Encoding.ASCII.GetString(buffer, 0, count);
+                            // Armed before the statement reaches the server, so no byte of its result can pass.
+                            if (_lost == "unlock" ? text.Contains("pg_advisory_unlock(", StringComparison.Ordinal)
+                                : sawUnlock && text.Contains("pg_locks", StringComparison.Ordinal)) Volatile.Write(ref withhold, 1);
+                            sawUnlock |= text.Contains("pg_advisory_unlock(", StringComparison.Ordinal);
+                            tail = text.Length > 32 ? text[^32..] : text;
+                            await serverStream.WriteAsync(buffer.AsMemory(0, count), _stop.Token);
+                        }
+                    }
+                    async Task Inbound()
+                    {
+                        var buffer = new byte[8192]; var tail = "";
+                        while (true)
+                        {
+                            var count = await serverStream.ReadAsync(buffer, _stop.Token);
+                            if (count == 0) return;
+                            if (Volatile.Read(ref withhold) == 0) { await clientStream.WriteAsync(buffer.AsMemory(0, count), _stop.Token); continue; }
+                            var text = tail + System.Text.Encoding.ASCII.GetString(buffer, 0, count);
+                            // The server completed the statement (CommandComplete "SELECT 1"); Npgsql never receives it.
+                            if (text.Contains("SELECT 1\0", StringComparison.Ordinal)) { Volatile.Write(ref _dropped, 1); client.Close(); return; }
+                            tail = text.Length > 32 ? text[^32..] : text;
+                        }
+                    }
+                    var outbound = Outbound(); var inbound = Inbound();
+                    await Task.WhenAny(outbound, inbound);
+                    client.Close(); backend.Close();
+                    try { await Task.WhenAll(outbound, inbound); }
+                    catch (Exception) when (!_stop.IsCancellationRequested) { }
+                }
+                catch (Exception) when (!_stop.IsCancellationRequested) { }
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _stop.Cancel(); _listener.Stop();
+            await _accept;
+            try { await Task.WhenAll(_bridges); } catch (Exception) { }
+            _stop.Dispose();
+        }
     }
 }
