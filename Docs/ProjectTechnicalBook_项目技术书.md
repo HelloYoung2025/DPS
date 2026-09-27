@@ -365,7 +365,7 @@ Modules/<module-id>/
 |---|---:|---:|---|---|
 | `factory-upgrade-intake` | 0.2.0 | R3 | 升级请求校验 | active v2 |
 | `factory-instruction-resolver` | 0.4.0 | R3 | 指令绑定与收据 | active v2 |
-| `factory-impact-analyzer` | 0.1.0 | R3 | 影响、依赖、并行波次 | 仍消费 v1 |
+| `factory-impact-analyzer` | 0.2.0 | R3 | 影响、依赖、并行波次 | active v2；v1 仅 quarantine-only |
 | `factory-worktree-manager` | 0.1.0 | R3 | one-writer Worktree/lease | 仍消费 v1 |
 | `factory-trusted-runner` | 0.1.0 | R3 | 固定 argv 可信测试 | 仍消费 v1 |
 | `factory-merge-controller` | 0.1.0 | R2 | merge-head 重测和决策 | proposed |
@@ -442,7 +442,7 @@ Modules/<module-id>/
 
 - Planner 生产 v2，Policy 仍消费 v1。
 - GBrain Projector 生产 v2，SoulMemory/Evidence 仍有 v1。
-- Factory Intake/Resolver 已 v2，Impact/Worktree/Runner/Host 仍有 v1。
+- Factory Intake/Resolver/Impact 已 v2，Worktree/Runner/Host 仍有 v1。
 - Release Controller 已 rollout v2，Rollback/Host 仍有 v1。
 - `execution.authorization`、Edge Journal、native acknowledgement 存在 reciprocal/owner 问题。
 - 生成的 `dependency-graph.yaml` 与 `compatibility.yaml` 已漂移。
@@ -616,11 +616,11 @@ Release BOM 至少包含：
 
 ### 10.6 当前 Factory 阻断
 
-Factory 11 个模块全部 `proposed`、`releaseEligible=false`。Intake/Resolver/Release 已转 v2，但 Impact/Worktree/Runner/Host/Rollback 仍包含 v1，当前不能端到端自动发布。
+Factory 11 个模块全部 `proposed`、`releaseEligible=false`。Intake/Resolver/Impact/Release 已转 v2，但 Worktree/Runner/Host/Rollback 仍包含 v1，当前不能端到端自动发布。
 
 优先修复顺序：
 
-1. Impact、Worktree、Trusted Runner、Host 迁至 v2。
+1. Worktree、Trusted Runner、Host 迁至 v2。
 2. Rollback 迁至 `rollout.event/v2`。
 3. 修复全部 reciprocal communication 和唯一 owner。
 4. 更新 candidate trust paths 与 test evidence 分类。

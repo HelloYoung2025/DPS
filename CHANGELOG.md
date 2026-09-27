@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P04 Factory owner contract freeze
+
+- Freeze the current owned `upgrade.intent/v2`, `instruction.receipt/v2` and `module.change.plan/v2` contracts by owner tests that pin Schema bytes, committed production-derived corpora, digest vectors and canonicalizer behavior. Undomained receipt and plan digests are frozen unchanged; any change requires a new major.
+- Correct the technical book's Impact status to the current Manifest. No source, Schema byte, Manifest, module version, consumer, or active/quarantine state changes; this authorizes no release or activation.
+
 ### P17A/P17B mainline integration
 
 - This merge integrates only P17A and P17B (`fede545`) into mainline `afb4f9b`; both sides' changelog entries are kept verbatim.

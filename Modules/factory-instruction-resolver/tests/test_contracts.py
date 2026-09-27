@@ -41,6 +41,31 @@ assert INTAKE_SPEC.loader is not None
 sys.modules[INTAKE_SPEC.name] = INTAKE
 INTAKE_SPEC.loader.exec_module(INTAKE)
 
+REPOSITORY_ROOT = MODULE_ROOT.parents[1]
+RECEIPT_V2_SCHEMA = (
+    "Modules/factory-instruction-resolver/contracts/provided/"
+    "instruction.receipt.v2.schema.json"
+)
+RECEIPT_CORPUS_PATH = (
+    MODULE_ROOT / "contracts" / "provided" / "instruction.receipt.v2.corpus.json"
+)
+CANONICAL_VECTOR_NAMES = ["non_ascii", "nested_key_order", "integers", "literals"]
+
+
+def apply_corpus_mutations(value, mutations):
+    value = copy.deepcopy(value)
+    for mutation in mutations:
+        target = value
+        for key in mutation["path"][:-1]:
+            target = target[key]
+        if mutation["op"] == "remove":
+            del target[mutation["path"][-1]]
+        elif mutation["op"] == "replace":
+            target[mutation["path"][-1]] = mutation["value"]
+        else:
+            raise AssertionError("unknown corpus mutation operation")
+    return value
+
 
 def strict_format_checker():
     checker = FormatChecker()
@@ -66,19 +91,33 @@ def bound_file(path, order):
     }
 
 
+def intake_claims_binding(baseline_commit, target_modules, changes, receipt_id):
+    """Return the real Intake Manifest-ownership and domain-separated claims digests."""
+
+    class ManifestPort(INTAKE.ManifestOwnershipVerificationPort):
+        def verify(self, baseline, snapshot_sha256, supplied_receipt_id):
+            return supplied_receipt_id == receipt_id
+
+    authority = INTAKE.ProcessBoundManifestAuthority(ManifestPort())
+    ownership = authority.verify(
+        baseline_commit,
+        {module_id: ["Modules/%s/**" % module_id] for module_id in target_modules},
+        receipt_id,
+    )
+    return ownership.snapshot_sha256, INTAKE.public_contract_changes_sha256(
+        changes, target_modules, ownership, baseline_commit, authority
+    )
+
+
 def valid_instruction_receipt_v2():
     changes = []
     baseline_commit = "d" * 40
-    claims_sha = hashlib.sha256(
-        json.dumps(
-            {
-                "baseline_commit": baseline_commit,
-                "public_contract_changes": changes,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    manifest_ownership_sha, claims_sha = intake_claims_binding(
+        baseline_commit,
+        ["factory-instruction-resolver"],
+        changes,
+        "manifest:ownership-0002",
+    )
     baseline_facts = []
     baseline_facts_sha = hashlib.sha256(
         json.dumps(
@@ -130,7 +169,7 @@ def valid_instruction_receipt_v2():
         "source_requester_auth_context_sha256": "3" * 64,
         "source_requester_auth_receipt_id": "auth:receipt-0002",
         "source_requester_auth_nonce": "nonce_" + "4" * 32,
-        "source_manifest_ownership_sha256": "5" * 64,
+        "source_manifest_ownership_sha256": manifest_ownership_sha,
         "source_manifest_ownership_receipt_id": "manifest:ownership-0002",
         "requested_risk_tier": "R1",
         "requested_stage": "development",
@@ -935,6 +974,140 @@ class InstructionReceiptContractTests(unittest.TestCase):
         invalid["contract_declarations"][0]["mode"] = "compat-read"
         with self.assertRaises(ValidationError):
             self.validator.validate(invalid)
+
+    def load_receipt_corpus(self):
+        self.assertTrue(
+            RECEIPT_CORPUS_PATH.is_file(), "instruction.receipt/v2 corpus is missing"
+        )
+        return json.loads(RECEIPT_CORPUS_PATH.read_text(encoding="utf-8"))
+
+    def test_freeze_fixture_claims_digest_matches_intake_domain_digest(self):
+        receipt = valid_instruction_receipt_v2()
+        receipt_id = receipt["source_manifest_ownership_receipt_id"]
+
+        class ManifestPort(INTAKE.ManifestOwnershipVerificationPort):
+            def verify(self, baseline_commit, snapshot_sha256, supplied_receipt_id):
+                return supplied_receipt_id == receipt_id
+
+        authority = INTAKE.ProcessBoundManifestAuthority(ManifestPort())
+        ownership = authority.verify(
+            receipt["baseline_commit"],
+            {
+                module_id: ["Modules/%s/**" % module_id]
+                for module_id in receipt["requested_target_modules"]
+            },
+            receipt_id,
+        )
+        self.assertEqual(
+            INTAKE.public_contract_changes_sha256(
+                receipt["bound_contract_change_expectations"],
+                receipt["requested_target_modules"],
+                ownership,
+                receipt["baseline_commit"],
+                authority,
+            ),
+            receipt["source_contract_change_claims_sha256"],
+        )
+        self.assertEqual(
+            ownership.snapshot_sha256, receipt["source_manifest_ownership_sha256"]
+        )
+
+    def test_freeze_schema_bytes_are_pinned_by_owned_corpus(self):
+        template = self.load_receipt_corpus()["templates"]["v2_schema"]
+        self.assertEqual(
+            ("instruction.receipt", 2, RECEIPT_V2_SCHEMA),
+            (template["contract_id"], template["major"], template["expected_source"]),
+        )
+        self.assertEqual(
+            template["expected_source_sha256"],
+            hashlib.sha256((REPOSITORY_ROOT / RECEIPT_V2_SCHEMA).read_bytes()).hexdigest(),
+        )
+
+    def test_freeze_positive_receipts_recompute_production_digests(self):
+        corpus = self.load_receipt_corpus()
+        self.assertTrue(corpus["valid"])
+        for case in corpus["valid"]:
+            with self.subTest(case=case["name"]):
+                receipt = case["receipt"]
+                self.validator.validate(receipt)
+                self.assertEqual(
+                    receipt,
+                    SUBJECT._strict_receipt_v2_object(
+                        copy.deepcopy(receipt), require_bound=True
+                    ),
+                )
+                self.assertEqual(corpus["baseline_commit"], receipt["baseline_commit"])
+                self.assertEqual(
+                    case["receipt_sha256"],
+                    SUBJECT._sha256(SUBJECT._canonical_bytes(receipt)),
+                )
+                material = dict(receipt)
+                material.pop("receipt_id")
+                self.assertEqual(
+                    case["receipt_id"],
+                    "instruction:"
+                    + SUBJECT._sha256(SUBJECT._canonical_bytes(material))[:32],
+                )
+                self.assertEqual(case["receipt_id"], receipt["receipt_id"])
+                facts_sha = SUBJECT._sha256(SUBJECT._canonical_bytes({
+                    "baseline_commit": receipt["baseline_commit"],
+                    "verified_baseline_contract_facts": receipt[
+                        "verified_baseline_contract_facts"
+                    ],
+                }))
+                self.assertEqual(case["verified_baseline_contract_facts_sha256"], facts_sha)
+                self.assertEqual(facts_sha, receipt["verified_baseline_contract_facts_sha256"])
+                claims_sha = SUBJECT._domain_sha256(
+                    "dps.upgrade-intent/v2/public-contract-changes",
+                    {
+                        "baseline_commit": receipt["baseline_commit"],
+                        "manifest_ownership_sha256": receipt[
+                            "source_manifest_ownership_sha256"
+                        ],
+                        "public_contract_changes": receipt[
+                            "bound_contract_change_expectations"
+                        ],
+                    },
+                )
+                self.assertEqual(case["source_contract_change_claims_sha256"], claims_sha)
+                self.assertEqual(claims_sha, receipt["source_contract_change_claims_sha256"])
+
+    def test_freeze_negative_receipts_fail_schema_and_strict_parse_independently(self):
+        corpus = self.load_receipt_corpus()
+        valid = {case["name"]: case["receipt"] for case in corpus["valid"]}
+        self.assertTrue(corpus["invalid"])
+        for case in corpus["invalid"]:
+            with self.subTest(case=case["name"]):
+                value = apply_corpus_mutations(valid[case["base"]], case["mutations"])
+                self.assertEqual(
+                    case["schema_rejects"],
+                    bool(list(self.validator.iter_errors(value))),
+                )
+                self.assertEqual(
+                    case["rejected_by"] == "schema", case["schema_rejects"]
+                )
+                self.assertIn(case["rejected_by"], {"schema", "strict-parse"})
+                with self.assertRaises(SUBJECT.ResolutionError):
+                    SUBJECT._strict_receipt_v2_object(value, require_bound=True)
+
+    def test_freeze_canonicalizer_vectors(self):
+        vectors = self.load_receipt_corpus()["canonical_vectors"]
+        self.assertEqual(CANONICAL_VECTOR_NAMES, [vector["name"] for vector in vectors])
+        for vector in vectors:
+            with self.subTest(vector=vector["name"]):
+                actual = SUBJECT._canonical_bytes(vector["value"])
+                self.assertEqual(vector["canonical"].encode("utf-8"), actual)
+                self.assertEqual(vector["sha256"], hashlib.sha256(actual).hexdigest())
+
+    def test_freeze_contract_boundaries_reject_non_finite_numbers(self):
+        for value in (float("nan"), float("inf")):
+            receipt = valid_instruction_receipt_v2()
+            receipt["source_intent_contract"]["major"] = value
+            with self.assertRaises(SUBJECT.ResolutionError):
+                SUBJECT._strict_receipt_v2_object(receipt, require_bound=False)
+        for raw in (b'{"a":NaN}', b'{"a":Infinity}', b'{"a":-Infinity}', b'{"a":1.5}'):
+            with self.subTest(raw=raw), self.assertRaises(SUBJECT.ResolutionError):
+                SUBJECT._decode_canonical_upgrade_intent(raw)
 
 
 if __name__ == "__main__":

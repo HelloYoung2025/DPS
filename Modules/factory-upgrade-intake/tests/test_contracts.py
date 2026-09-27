@@ -24,6 +24,15 @@ BASELINE = "a" * 40
 OWNERSHIP = {
     "factory-upgrade-intake": ["Modules/factory-upgrade-intake/**"]
 }
+FROZEN_HASH_DOMAINS = {
+    "component": "dps.upgrade-intent/v2/public-contract-changes",
+    "quarantine_evidence": "dps.upgrade-intent/v2/quarantine-import-evidence",
+    "manifest_ownership": "dps.manifest-ownership/v1",
+    "requester_auth_context": "dps.requester-auth-context/v1",
+    "approval_subject": "dps.upgrade-intent/v2/approval-subject",
+    "full_intent": "dps.upgrade-intent/v2/full-intent",
+}
+CANONICAL_VECTOR_NAMES = ["non_ascii", "nested_key_order", "integers", "literals"]
 
 
 class AuthPort(SUBJECT.AuthVerificationPort):
@@ -306,6 +315,126 @@ class UpgradeIntentContractTests(unittest.TestCase):
         self.assertEqual("quarantine-only", quarantined.contract_mode)
         self.assertTrue(list(self.validator.iter_errors(json.loads(legacy))))
         self.assertFalse(hasattr(SUBJECT, "encode_upgrade_intent_v1"))
+
+    def test_freeze_hash_domains_are_complete_and_bound_to_production(self):
+        self.assertEqual(FROZEN_HASH_DOMAINS, self.corpus["hash_domains"])
+        domains = self.corpus["hash_domains"]
+
+        def framed(domain, material):
+            return hashlib.sha256(
+                b"DPS\x00" + domain.encode("ascii") + b"\x00"
+                + SUBJECT._canonical_json_bytes(material)
+            ).hexdigest()
+
+        changes = self.changes_from_refs(["v2_add_major", "v1_quarantine_import"])
+        canonical = SUBJECT.canonical_public_contract_changes(
+            changes, ["factory-upgrade-intake"], self.ownership,
+            BASELINE, self.manifest_authority,
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                b"DPS\x00" + domains["component"].encode("ascii") + b"\x00" + canonical
+            ).hexdigest(),
+            SUBJECT.public_contract_changes_sha256(
+                changes, ["factory-upgrade-intake"], self.ownership,
+                BASELINE, self.manifest_authority,
+            ),
+        )
+        quarantine = self.corpus["templates"]["v1_quarantine_import"]
+        self.assertEqual(
+            quarantine["quarantine_evidence_sha256"],
+            framed(domains["quarantine_evidence"], {
+                key: quarantine[key] for key in (
+                    "baseline_commit", "contract_id", "major", "expected_source",
+                    "expected_source_sha256", "quarantine_reason",
+                )
+            }),
+        )
+        self.assertEqual(
+            self.corpus["manifest_ownership_sha256"],
+            framed(domains["manifest_ownership"], {
+                "baseline_commit": BASELINE,
+                "ownership": SUBJECT._normalize_ownership(OWNERSHIP, set()),
+            }),
+        )
+        vector = self.corpus["intent_vectors"][0]
+        record = vector["requester_auth_record"]
+        self.assertEqual(
+            vector["requester_auth_context_sha256"],
+            framed(domains["requester_auth_context"], {
+                key: record[key] for key in (
+                    "context_id", "subject", "role", "audience",
+                    "issued_at", "expires_at", "nonce", "receipt_id",
+                )
+            }),
+        )
+        intent = vector["intent"]
+        self.assertEqual(
+            vector["approval_subject_sha256"],
+            framed(domains["approval_subject"], {
+                key: value for key, value in intent.items()
+                if key not in {"authorization", "approval_subject_sha256", "upgrade_intent_sha256"}
+            }),
+        )
+        self.assertEqual(
+            vector["upgrade_intent_sha256"],
+            framed(domains["full_intent"], {
+                key: value for key, value in intent.items()
+                if key != "upgrade_intent_sha256"
+            }),
+        )
+
+    def test_freeze_intent_digest_vectors_replay_production(self):
+        self.assertIn("intent_vectors", self.corpus)
+        valid = {case["name"]: case for case in self.corpus["valid"]}
+        self.assertEqual(
+            sorted(valid),
+            sorted(vector["valid_ref"] for vector in self.corpus["intent_vectors"]),
+        )
+        for vector in self.corpus["intent_vectors"]:
+            with self.subTest(case=vector["valid_ref"]):
+                auth = self.auth_authority.verify(
+                    copy.deepcopy(vector["requester_auth_record"])
+                )
+                self.assertEqual(
+                    vector["requester_auth_context_sha256"],
+                    auth.requester_context_sha256,
+                )
+                intent = vector["intent"]
+                self.assertEqual(
+                    valid[vector["valid_ref"]]["public_contract_changes_sha256"],
+                    intent["public_contract_changes_sha256"],
+                )
+                for field, function in (
+                    ("approval_subject_sha256", SUBJECT.approval_subject_sha256),
+                    ("upgrade_intent_sha256", SUBJECT.upgrade_intent_sha256),
+                ):
+                    self.assertEqual(vector[field], function(intent))
+                    self.assertEqual(vector[field], intent[field])
+                self.assertEqual(intent, SUBJECT.validate_upgrade_intent(
+                    intent, auth, self.ownership,
+                    self.auth_authority, self.manifest_authority,
+                ))
+                wire = SUBJECT.encode_upgrade_intent_v2(
+                    intent, auth, self.ownership,
+                    self.auth_authority, self.manifest_authority,
+                )
+                self.assertEqual(vector["wire_sha256"], hashlib.sha256(wire).hexdigest())
+
+    def test_freeze_canonicalizer_vectors(self):
+        self.assertIn("canonical_vectors", self.corpus)
+        vectors = self.corpus["canonical_vectors"]
+        self.assertEqual(CANONICAL_VECTOR_NAMES, [vector["name"] for vector in vectors])
+        for vector in vectors:
+            with self.subTest(vector=vector["name"]):
+                actual = SUBJECT._canonical_json_bytes(vector["value"])
+                self.assertEqual(vector["canonical"].encode("utf-8"), actual)
+                self.assertEqual(vector["sha256"], hashlib.sha256(actual).hexdigest())
+
+    def test_freeze_canonicalizer_rejects_non_finite_numbers(self):
+        for value in (float("nan"), float("inf"), {"a": float("-inf")}):
+            with self.assertRaises(SUBJECT.IntentValidationError):
+                SUBJECT._canonical_json_bytes(value)
 
 
 if __name__ == "__main__":

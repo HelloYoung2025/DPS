@@ -1,0 +1,729 @@
+{
+  "schema_version": "dps.instruction-receipt-contract-corpus/v2",
+  "contract_id": "instruction.receipt/v2",
+  "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+  "templates": {
+    "v2_schema": {
+      "contract_id": "instruction.receipt",
+      "major": 2,
+      "expected_source": "Modules/factory-instruction-resolver/contracts/provided/instruction.receipt.v2.schema.json",
+      "expected_source_sha256": "2063930b65e6ca36bcb6bcb12b57b72540de9dcb384d6c5b08028bb91666f0a7"
+    }
+  },
+  "valid": [
+    {
+      "name": "additive-schema",
+      "receipt": {
+        "agent_identity": "factory-module-implementer",
+        "agent_role": "module-implementer",
+        "auth_context_id": "authctx:impact0001",
+        "authorized_write_paths": [
+          "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+          "Modules/alpha-module/src/domain.py"
+        ],
+        "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+        "baseline_verification_required": true,
+        "bound_contract_change_expectations": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "change_kind": "additive-schema",
+            "contract_id": "alpha.event",
+            "expected_baseline_state": "present",
+            "expected_mode": "active",
+            "expected_owner_module": "alpha-module",
+            "expected_previous_mode": "active",
+            "expected_previous_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "expected_source_sha256": "3da9a5de3ed9466cef8df57f7180fcf949008853e4f8872c1294b38c065884ae",
+            "expected_status": "proposed",
+            "major": 1,
+            "quarantine_evidence_sha256": null,
+            "quarantine_reason": null
+          }
+        ],
+        "changeset_contract_verification_required": true,
+        "contract_declarations": [
+          {
+            "contract_id": "alpha.event",
+            "declaration_kind": "provided",
+            "declaring_module": "alpha-module",
+            "major": 1,
+            "mode": "active",
+            "owner_module": "alpha-module",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "status": "proposed"
+          },
+          {
+            "contract_id": "alpha.event",
+            "declaration_kind": "consumed",
+            "declaring_module": "exact-consumer",
+            "major": 1,
+            "mode": "active",
+            "owner_module": "alpha-module",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "status": "proposed"
+          }
+        ],
+        "contract_id": "instruction.receipt/v2",
+        "contracts": [
+          {
+            "git_blob": "eae822030c558572c3272a7697ca13115389c1e2",
+            "order": 0,
+            "path": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "sha256": "3da9a5de3ed9466cef8df57f7180fcf949008853e4f8872c1294b38c065884ae",
+            "source_state": "modified"
+          }
+        ],
+        "device_binding_id": null,
+        "diff_fingerprint": "00f0208e69d6ea22a4d59366eb3698b93db6c89462311dd5768b494bb0254fa4",
+        "governance": [
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 0,
+            "path": "governance/modules/compatibility.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 1,
+            "path": "governance/modules/dependency-graph.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 2,
+            "path": "governance/modules/module-catalog.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 3,
+            "path": "governance/policies/compatibility-policy.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 4,
+            "path": "governance/policies/risk-policy.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          }
+        ],
+        "idempotency_key": "idem_3333333333333333333333333333333333333333333333333333333333333333",
+        "instructions": [
+          {
+            "git_blob": "2feb3158f9ff15c2edccfaa9708c3dbd5a58ba51",
+            "order": 0,
+            "path": "AGENTS.md",
+            "sha256": "a878f6c31504292236103be2724cd4d3c881a721ea11b9c5df062ef1eb377630",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "e442bb2f7b2a62bb7310b8659a42479f3c60d4f5",
+            "order": 1,
+            "path": "Modules/alpha-module/AGENTS.md",
+            "sha256": "182bb6a3d118634077bd1bb520168c1130eeba9903236cd8d8faa6fbf60eb4bd",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "e442bb2f7b2a62bb7310b8659a42479f3c60d4f5",
+            "order": 2,
+            "path": "Modules/exact-consumer/AGENTS.md",
+            "sha256": "182bb6a3d118634077bd1bb520168c1130eeba9903236cd8d8faa6fbf60eb4bd",
+            "source_state": "tracked"
+          }
+        ],
+        "intent_id": "intent:impact0001",
+        "invalidated_reason": null,
+        "manifests": [
+          {
+            "git_blob": "f2dc15d0c17a8208eadb919c469e481bf24bb040",
+            "order": 0,
+            "path": "Modules/alpha-module/module.yaml",
+            "sha256": "9983abe192526103a87e200d82d1a204a0893df52cb463fe3927ecb12a12fe40",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "3c1f207698827864e457b0708cb0b750b778d331",
+            "order": 1,
+            "path": "Modules/exact-consumer/module.yaml",
+            "sha256": "edb73c3c881a0e7a2cf374a1f2403907ef9d887358272d0797f484ff8e899b5d",
+            "source_state": "tracked"
+          }
+        ],
+        "occurred_at": "2026-07-15T01:00:00Z",
+        "operations": [
+          {
+            "git_blob": "73bf2864b50dadf1a4ec452f208fe3b92fdd4c04",
+            "order": 0,
+            "path": "Modules/alpha-module/operations/README.md",
+            "sha256": "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "73bf2864b50dadf1a4ec452f208fe3b92fdd4c04",
+            "order": 1,
+            "path": "Modules/exact-consumer/operations/README.md",
+            "sha256": "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62",
+            "source_state": "tracked"
+          }
+        ],
+        "platform_account_id": null,
+        "privacy_class": "internal",
+        "producer_module": "factory-instruction-resolver",
+        "receipt_id": "instruction:0ec83d46b8883c82499242ba7e433b4f",
+        "requested_risk_tier": "R1",
+        "requested_stage": "development",
+        "requested_target_modules": [
+          "alpha-module"
+        ],
+        "resolved_at": "2026-07-15T01:00:00Z",
+        "schema_version": "dps.instruction-receipt/v2",
+        "scope": [
+          "alpha-module",
+          "exact-consumer"
+        ],
+        "soul_id": null,
+        "source_approval_expires_at": null,
+        "source_approval_subject_sha256": "c3024109ddead2e852b70b84932bb8b49b2cddeb0f1dbba04376fb959fc7dea1",
+        "source_authorization_status": "not-required",
+        "source_contract_change_claims_sha256": "3e300cd0e08ce4f0ebc45160dece6c31fcdde4ce5ced2627cca99afa14e402b7",
+        "source_contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "source_intake_audience": "dps.factory-instruction-resolver",
+        "source_intake_payload_sha256": "2ca6ce380ee029604506713087d841f1491ffe58c6d75f908e37f4cf9f239cc0",
+        "source_intake_peer_module": "factory-upgrade-intake",
+        "source_intake_trust_expires_at": "2026-07-15T02:00:00Z",
+        "source_intake_trust_issued_at": "2026-07-15T00:30:00Z",
+        "source_intake_trust_nonce": "nonce_2ca6ce380ee029604506713087d841f1",
+        "source_intake_trust_receipt_id": "trust:2ca6ce380ee029604506713087d841f1",
+        "source_intake_verified_at": "2026-07-15T01:00:00Z",
+        "source_intent_contract": {
+          "contract_id": "upgrade.intent",
+          "major": 2,
+          "mode": "active"
+        },
+        "source_manifest_ownership_expires_at": "2026-07-15T03:00:00Z",
+        "source_manifest_ownership_receipt_id": "manifest:ownership0001",
+        "source_manifest_ownership_sha256": "5b8179fe8bf79c8d668ebe31d96615880d24c9c0ad393a2a5c6aaa9fbcf2c09d",
+        "source_requester_auth_context_sha256": "bbe1aeb51ce34cda0f36e3f337630a3861b44180f8643958d012941e0ddb7fc2",
+        "source_requester_auth_expires_at": "2026-07-15T03:00:00Z",
+        "source_requester_auth_nonce": "nonce_11111111111111111111111111111111",
+        "source_requester_auth_receipt_id": "auth:impact-receipt0001",
+        "source_upgrade_intent_sha256": "87c2f815007c61e29cd17c6dc66065a4afb35259e5e13b60285ae22d862f2c3f",
+        "status": "BOUND",
+        "tests": [
+          {
+            "git_blob": "3598c3003fd48a614bd5497a5133ad42f7467081",
+            "order": 0,
+            "path": "Modules/alpha-module/tests/README.md",
+            "sha256": "59830ebc3a4184110566bf1a290d08473dfdcbd492ce498b14cd1a5e2fa2e441",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "3598c3003fd48a614bd5497a5133ad42f7467081",
+            "order": 1,
+            "path": "Modules/exact-consumer/tests/README.md",
+            "sha256": "59830ebc3a4184110566bf1a290d08473dfdcbd492ce498b14cd1a5e2fa2e441",
+            "source_state": "tracked"
+          }
+        ],
+        "trace_id": "trace_22222222222222222222222222222222",
+        "verified_baseline_contract_facts": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "consumer_modules": [
+              "exact-consumer"
+            ],
+            "contract_id": "alpha.event",
+            "family_owner_module": "alpha-module",
+            "major": 1,
+            "mode": "active",
+            "owner_module": "alpha-module",
+            "presence": "present",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "status": "proposed"
+          }
+        ],
+        "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891"
+      },
+      "receipt_sha256": "ce08966a3cbfdbfa0c11f9ee32eeef28c02e5b3ece26455d5d641f966a5301b6",
+      "receipt_id": "instruction:0ec83d46b8883c82499242ba7e433b4f",
+      "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891",
+      "source_contract_change_claims_sha256": "3e300cd0e08ce4f0ebc45160dece6c31fcdde4ce5ced2627cca99afa14e402b7"
+    },
+    {
+      "name": "mode-transition",
+      "receipt": {
+        "agent_identity": "factory-module-implementer",
+        "agent_role": "module-implementer",
+        "auth_context_id": "authctx:impact0001",
+        "authorized_write_paths": [
+          "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+          "Modules/alpha-module/src/domain.py"
+        ],
+        "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+        "baseline_verification_required": true,
+        "bound_contract_change_expectations": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "change_kind": "mode-transition",
+            "contract_id": "alpha.event",
+            "expected_baseline_state": "present",
+            "expected_mode": "quarantine-only",
+            "expected_owner_module": "alpha-module",
+            "expected_previous_mode": "active",
+            "expected_previous_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "expected_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_status": "deprecated",
+            "major": 1,
+            "quarantine_evidence_sha256": null,
+            "quarantine_reason": null
+          }
+        ],
+        "changeset_contract_verification_required": true,
+        "contract_declarations": [
+          {
+            "contract_id": "alpha.event",
+            "declaration_kind": "provided",
+            "declaring_module": "alpha-module",
+            "major": 1,
+            "mode": "quarantine-only",
+            "owner_module": "alpha-module",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "status": "deprecated"
+          },
+          {
+            "contract_id": "alpha.event",
+            "declaration_kind": "consumed",
+            "declaring_module": "exact-consumer",
+            "major": 1,
+            "mode": "quarantine-only",
+            "owner_module": "alpha-module",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "status": "deprecated"
+          }
+        ],
+        "contract_id": "instruction.receipt/v2",
+        "contracts": [
+          {
+            "git_blob": "898aa61cbe86e2abd3d4c792068271201dbb26d8",
+            "order": 0,
+            "path": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "source_state": "tracked"
+          }
+        ],
+        "device_binding_id": null,
+        "diff_fingerprint": "4c4e9f11618875d65565f767361fa60077330eabd8051f914170a2c2ede5b563",
+        "governance": [
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 0,
+            "path": "governance/modules/compatibility.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 1,
+            "path": "governance/modules/dependency-graph.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 2,
+            "path": "governance/modules/module-catalog.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 3,
+            "path": "governance/policies/compatibility-policy.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "9e26dfeeb6e641a33dae4961196235bdb965b21b",
+            "order": 4,
+            "path": "governance/policies/risk-policy.yaml",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "source_state": "tracked"
+          }
+        ],
+        "idempotency_key": "idem_3333333333333333333333333333333333333333333333333333333333333333",
+        "instructions": [
+          {
+            "git_blob": "2feb3158f9ff15c2edccfaa9708c3dbd5a58ba51",
+            "order": 0,
+            "path": "AGENTS.md",
+            "sha256": "a878f6c31504292236103be2724cd4d3c881a721ea11b9c5df062ef1eb377630",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "e442bb2f7b2a62bb7310b8659a42479f3c60d4f5",
+            "order": 1,
+            "path": "Modules/alpha-module/AGENTS.md",
+            "sha256": "182bb6a3d118634077bd1bb520168c1130eeba9903236cd8d8faa6fbf60eb4bd",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "e442bb2f7b2a62bb7310b8659a42479f3c60d4f5",
+            "order": 2,
+            "path": "Modules/exact-consumer/AGENTS.md",
+            "sha256": "182bb6a3d118634077bd1bb520168c1130eeba9903236cd8d8faa6fbf60eb4bd",
+            "source_state": "tracked"
+          }
+        ],
+        "intent_id": "intent:impact0001",
+        "invalidated_reason": null,
+        "manifests": [
+          {
+            "git_blob": "006039ea4d0887a1edda03a29e4bfa39766c390a",
+            "order": 0,
+            "path": "Modules/alpha-module/module.yaml",
+            "sha256": "3f426774d932370e35c1d7927966c0856566549605eeb956b73f9fce80a7e2bf",
+            "source_state": "modified"
+          },
+          {
+            "git_blob": "e2f622b30de0eb6f0c1f244b649820202bb69dca",
+            "order": 1,
+            "path": "Modules/exact-consumer/module.yaml",
+            "sha256": "0f67448650fb97a71ee7365cbbc325614936a21de5e57290bb414a0fb0436c18",
+            "source_state": "modified"
+          }
+        ],
+        "occurred_at": "2026-07-15T01:00:00Z",
+        "operations": [
+          {
+            "git_blob": "73bf2864b50dadf1a4ec452f208fe3b92fdd4c04",
+            "order": 0,
+            "path": "Modules/alpha-module/operations/README.md",
+            "sha256": "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "73bf2864b50dadf1a4ec452f208fe3b92fdd4c04",
+            "order": 1,
+            "path": "Modules/exact-consumer/operations/README.md",
+            "sha256": "da25480fb483e6ce3d30f1a179c3c07e9f3b045425b0ac54acc6758a97e2db62",
+            "source_state": "tracked"
+          }
+        ],
+        "platform_account_id": null,
+        "privacy_class": "internal",
+        "producer_module": "factory-instruction-resolver",
+        "receipt_id": "instruction:df6417860bb1867f0837431071913198",
+        "requested_risk_tier": "R1",
+        "requested_stage": "development",
+        "requested_target_modules": [
+          "alpha-module"
+        ],
+        "resolved_at": "2026-07-15T01:00:00Z",
+        "schema_version": "dps.instruction-receipt/v2",
+        "scope": [
+          "alpha-module",
+          "exact-consumer"
+        ],
+        "soul_id": null,
+        "source_approval_expires_at": null,
+        "source_approval_subject_sha256": "0d9a6d63756c890f66ff6d0245c8fc6cb00a24a22df1e27ad742244a93d7f8d2",
+        "source_authorization_status": "not-required",
+        "source_contract_change_claims_sha256": "f85f6468871ec9e6b6a59876262ca58039c0fcbeb2215cea6ca5429ac62ee9b3",
+        "source_contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "source_intake_audience": "dps.factory-instruction-resolver",
+        "source_intake_payload_sha256": "8851f4659b2cb693aaaa1d7152d2227674fc2c213e7e56a889e89a3c74788f22",
+        "source_intake_peer_module": "factory-upgrade-intake",
+        "source_intake_trust_expires_at": "2026-07-15T02:00:00Z",
+        "source_intake_trust_issued_at": "2026-07-15T00:30:00Z",
+        "source_intake_trust_nonce": "nonce_8851f4659b2cb693aaaa1d7152d22276",
+        "source_intake_trust_receipt_id": "trust:8851f4659b2cb693aaaa1d7152d22276",
+        "source_intake_verified_at": "2026-07-15T01:00:00Z",
+        "source_intent_contract": {
+          "contract_id": "upgrade.intent",
+          "major": 2,
+          "mode": "active"
+        },
+        "source_manifest_ownership_expires_at": "2026-07-15T03:00:00Z",
+        "source_manifest_ownership_receipt_id": "manifest:ownership0001",
+        "source_manifest_ownership_sha256": "5b8179fe8bf79c8d668ebe31d96615880d24c9c0ad393a2a5c6aaa9fbcf2c09d",
+        "source_requester_auth_context_sha256": "bbe1aeb51ce34cda0f36e3f337630a3861b44180f8643958d012941e0ddb7fc2",
+        "source_requester_auth_expires_at": "2026-07-15T03:00:00Z",
+        "source_requester_auth_nonce": "nonce_11111111111111111111111111111111",
+        "source_requester_auth_receipt_id": "auth:impact-receipt0001",
+        "source_upgrade_intent_sha256": "7bed51b20614aa99a1508312cbe18d52d92f8f606d07c91aeaf0188d0e1da83a",
+        "status": "BOUND",
+        "tests": [
+          {
+            "git_blob": "3598c3003fd48a614bd5497a5133ad42f7467081",
+            "order": 0,
+            "path": "Modules/alpha-module/tests/README.md",
+            "sha256": "59830ebc3a4184110566bf1a290d08473dfdcbd492ce498b14cd1a5e2fa2e441",
+            "source_state": "tracked"
+          },
+          {
+            "git_blob": "3598c3003fd48a614bd5497a5133ad42f7467081",
+            "order": 1,
+            "path": "Modules/exact-consumer/tests/README.md",
+            "sha256": "59830ebc3a4184110566bf1a290d08473dfdcbd492ce498b14cd1a5e2fa2e441",
+            "source_state": "tracked"
+          }
+        ],
+        "trace_id": "trace_22222222222222222222222222222222",
+        "verified_baseline_contract_facts": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "consumer_modules": [
+              "exact-consumer"
+            ],
+            "contract_id": "alpha.event",
+            "family_owner_module": "alpha-module",
+            "major": 1,
+            "mode": "active",
+            "owner_module": "alpha-module",
+            "presence": "present",
+            "source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "status": "proposed"
+          }
+        ],
+        "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891"
+      },
+      "receipt_sha256": "61050a8a0cad8b96f74dc8f4cf47d5400f24ba27c324778cbfc2250012104dfb",
+      "receipt_id": "instruction:df6417860bb1867f0837431071913198",
+      "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891",
+      "source_contract_change_claims_sha256": "f85f6468871ec9e6b6a59876262ca58039c0fcbeb2215cea6ca5429ac62ee9b3"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-major",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "contract_id"
+          ],
+          "value": "instruction.receipt/v3"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "extra-field",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "implementation_passed"
+          ],
+          "value": true
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "missing-claims-digest",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "remove",
+          "path": [
+            "source_contract_change_claims_sha256"
+          ]
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "bound-with-reason",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "invalidated_reason"
+          ],
+          "value": "pretend stale"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "glob-write-path",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "authorized_write_paths"
+          ],
+          "value": [
+            "Modules/alpha-module/src/*.py"
+          ]
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "claims-marked-verified",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "source_contract_change_claims_status"
+          ],
+          "value": "VERIFIED"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "receipt-id-mismatch",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "receipt_id"
+          ],
+          "value": "instruction:00000000000000000000000000000000"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "strict-parse"
+    },
+    {
+      "name": "occurred-not-resolved",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "occurred_at"
+          ],
+          "value": "2026-07-15T00:59:59Z"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "strict-parse"
+    },
+    {
+      "name": "expiry-equality",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "source_intake_trust_expires_at"
+          ],
+          "value": "2026-07-15T01:00:00Z"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "strict-parse"
+    },
+    {
+      "name": "stale-as-bound-input",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "status"
+          ],
+          "value": "STALE"
+        },
+        {
+          "op": "replace",
+          "path": [
+            "invalidated_reason"
+          ],
+          "value": "bound content or diff scope changed"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "strict-parse"
+    },
+    {
+      "name": "float-major",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "source_intent_contract",
+            "major"
+          ],
+          "value": 2.0
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "strict-parse"
+    }
+  ],
+  "canonical_vectors": [
+    {
+      "name": "non_ascii",
+      "value": {
+        "s": "é中🙂"
+      },
+      "canonical": "{\"s\":\"é中🙂\"}",
+      "sha256": "c2eb647dc54c8959e4cafb136e144d5a4c3f704fcd00c627c276e868552abb8f"
+    },
+    {
+      "name": "nested_key_order",
+      "value": {
+        "b": {
+          "z": 1,
+          "a": [
+            {
+              "d": 2,
+              "c": 3
+            }
+          ]
+        },
+        "a": "x"
+      },
+      "canonical": "{\"a\":\"x\",\"b\":{\"a\":[{\"c\":3,\"d\":2}],\"z\":1}}",
+      "sha256": "5483227d41280a87b45ecb51df928422ef33daf5c5c13689efba58ffec6a75b6"
+    },
+    {
+      "name": "integers",
+      "value": [
+        0,
+        -1,
+        2147483647,
+        -2147483648
+      ],
+      "canonical": "[0,-1,2147483647,-2147483648]",
+      "sha256": "3290f5f03c9e120d67c8efd90c006bbe0464fffbc8abf0b015d8d3b2632cdaa6"
+    },
+    {
+      "name": "literals",
+      "value": {
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "canonical": "{\"f\":false,\"n\":null,\"t\":true}",
+      "sha256": "22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+    }
+  ]
+}
