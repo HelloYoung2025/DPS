@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -86,6 +87,42 @@ public sealed class PolicyShadowChainContractTests
                 Assert.ThrowsAny<Exception>(() => ApprovalReadbackV1Codec.Deserialize(payload));
             }
         }
+    }
+
+    /// <summary>
+    /// Stub Policy (mock, not PostgreSQL evidence): it returns an owner-codec-valid
+    /// <c>approval.readback/v1</c> that binds a different request. The Host must reach
+    /// its readback-binding check after Policy returns and reject it.
+    /// </summary>
+    [Fact, Trait("Category", "Contract")]
+    public async Task ReadbackBoundToAnotherRequestIsRejectedAfterPolicyReturns()
+    {
+        using var stream = typeof(ApprovalReadbackV1).Assembly.GetManifestResourceStream(
+                               "Dps.PolicyApproval.Contracts.approval.readback.v1.corpus.json")
+                           ?? throw new InvalidOperationException("Owner readback corpus is missing.");
+        var corpus = JsonNode.Parse(stream)!.AsObject();
+        var otherRequestReadback = Encoding.UTF8.GetBytes(corpus["base"]!.ToJsonString());
+        Assert.Equal(2, ApprovalReadbackV1Codec.Deserialize(otherRequestReadback).ProposalContractMajor);
+
+        var suffix = new string('7', 64);
+        var proposal = ControlPlaneTruthStoreTests.ExpectedProposal(
+            "soul_" + suffix, "db_" + suffix[..32], "pa_" + suffix[32..], "trace_" + suffix[..32], "idem_" + suffix,
+            DateTimeOffset.UtcNow.AddSeconds(-1));
+        using var signer = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var policyCalls = 0;
+        var chain = new ControlPlanePolicyShadowChain(
+            (_, _, _) =>
+            {
+                policyCalls++;
+                return Task.FromResult(otherRequestReadback.ToArray());
+            },
+            signer,
+            new ControlPlaneShadowChainOptions(new string('b', 64)) { KillControlPlaneIngest = false });
+
+        var rejected = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => chain.RelayShadowAsync(Dps.Planner.Contracts.ActionProposalV2Json.Serialize(proposal), TestContext.Current.CancellationToken));
+        Assert.Equal("Policy readback does not bind the relayed SHADOW request.", rejected.Message);
+        Assert.Equal(1, policyCalls);
     }
 
     [Fact, Trait("Category", "Contract")]

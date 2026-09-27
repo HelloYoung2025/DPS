@@ -85,6 +85,32 @@ public sealed class PolicyShadowChainIntegrationTests
     }
 
     [Fact, Trait("Category", "Integration")]
+    public async Task RelaySeventhFractionalDigitIsEvaluatedOnFirstCallAndReplaysExactly()
+    {
+        var token = TestContext.Current.CancellationToken;
+        await using var chain = await ShadowChainDatabase.CreateAsync(token);
+        var (soulId, device, account) = Scope("digit7-relay");
+        await chain.AppendRuntimeStateAsync(soulId, device, account, token);
+        var occurredAt = SeventhDigit(1234567);
+        await AssertSeventhDigitEvaluatedOnFirstCallAsync(
+            chain, Relay(PlannerWire(soulId, device, account, "digit7-relay", occurredAt)), occurredAt, token);
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task PlanSeventhFractionalDigitIsEvaluatedOnFirstCallAndReplaysExactly()
+    {
+        if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
+        var token = TestContext.Current.CancellationToken;
+        await using var soul = await SoulCurrentProcessFixture.CreateAsync(token);
+        var identity = await ReadActiveSoulAsync(soul, token);
+        var resolved = SoulResolvedCanonicalV1.FromUtf8Json(Convert.FromBase64String(identity));
+        await using var chain = await ShadowChainDatabase.CreateAsync(token);
+        await chain.AppendRuntimeStateAsync(resolved.SoulId, resolved.DeviceBindingId, resolved.PlatformAccountId, token);
+        var occurredAt = SeventhDigit(3456787);
+        await AssertSeventhDigitEvaluatedOnFirstCallAsync(chain, Plan(identity, Input(occurredAt)), occurredAt, token);
+    }
+
+    [Fact, Trait("Category", "Integration")]
     public async Task RejectedOrForgedIdentityNeverReachesPlannerOrPolicy()
     {
         if (!OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
@@ -229,6 +255,40 @@ public sealed class PolicyShadowChainIntegrationTests
                 Guid.NewGuid(), new string('c', 64), soulId, device, account, "trace_" + new string('3', 32),
                 "idem_" + new string('4', 64), DateTimeOffset.UtcNow, null)), null), token));
         Assert.Equal(before, await chain.SnapshotAsync(token));
+    }
+
+    /// <summary>Whole second − 3 s plus a sub-second tick count whose 100 ns digit is non-zero; independent of clock precision.</summary>
+    private static DateTimeOffset SeventhDigit(long ticks)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var occurredAt = new DateTimeOffset(now.Ticks - now.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero).AddSeconds(-3).AddTicks(ticks);
+        Assert.NotEqual(0, occurredAt.Ticks % 10);
+        return occurredAt;
+    }
+
+    /// <summary>
+    /// The first call is EVALUATED with exactly one row in each decision table, equals the exact
+    /// reader, carries the stored (µs-truncated) valid_until, and an exact replay adds nothing.
+    /// </summary>
+    private static async Task AssertSeventhDigitEvaluatedOnFirstCallAsync(
+        ShadowChainDatabase chain, JsonObject request, DateTimeOffset occurredAt, CancellationToken token)
+    {
+        var before = await chain.SnapshotAsync(token);
+        var first = await chain.RunAsync(request, token);
+        Assert.True(first.Exit == 0, first.Output);
+        var wire = Evaluated(first.Output);
+        var afterFirst = await chain.SnapshotAsync(token);
+        AssertOnlyDecisionRowsAdded(chain, before, afterFirst, 1);
+        var readback = ApprovalReadbackV1Codec.Deserialize(wire);
+        Assert.Equal(wire, await chain.ReadAsync(readback, token));
+        var bound = occurredAt + ApprovalEvaluationRequestV1.Lifetime;
+        Assert.Equal(new DateTimeOffset(bound.Ticks - bound.Ticks % 10, TimeSpan.Zero), readback.ValidUntil);
+
+        var replay = await chain.RunAsync(request, token);
+        Assert.True(replay.Exit == 0, replay.Output);
+        Assert.Equal(wire, Evaluated(replay.Output));
+        Assert.Equal(afterFirst, await chain.SnapshotAsync(token));
+        Assert.Equal(wire, await chain.ReadAsync(readback, token));
     }
 
     private static async Task<string> ReadActiveSoulAsync(SoulCurrentProcessFixture soul, CancellationToken token)

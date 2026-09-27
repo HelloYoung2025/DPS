@@ -4,6 +4,7 @@
 
 - Add the Policy-owned `approval.readback/v1` contract: a strict DTO/codec, a Draft 2020-12 schema that references `approval.decision/v1` by `$id`, a locked 28-case corpus, and the domain `dps.policy-approval.approval-readback/v1`. The exact reader projects it through `PolicyApprovalAuthoritativeSnapshot.ToReadbackV1()`. `request_signature` comes only from the persisted migration-005 column: required for major 2, null for major 1. The top-level scope fields repeat the persisted row scope and must equal the embedded decision. No migration, grant or table was added.
 - Declare the outbound readback edge to `control-plane-host`. The inbound `action.proposal/v2` edge now peers `control-plane-host`, which relays with the producer preserved, under scope `module:control-plane-host`.
+- R2 (P06 S2 rework): for a newly inserted decision, `EvaluateAsync` now returns the snapshot read back from the persisted row in the same transaction before commit, through the same `ReadSnapshotAsync` path as the duplicate branch, instead of an in-memory copy. `valid_until` is therefore the stored `timestamptz` value: truncated to microseconds and never later than the evaluated bound. The first return now equals every later exact read and replay when `occurred_at` has a non-zero seventh fractional digit. PostgreSQL regressions cover `.1234567`, `.1234575` and `.9999995` (truncated, not rounded), plus an EXECUTE approval. No contract, migration, API or version change.
 
 ## 0.7.0 - Proposed
 

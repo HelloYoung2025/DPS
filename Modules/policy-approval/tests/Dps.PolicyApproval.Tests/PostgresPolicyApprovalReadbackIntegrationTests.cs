@@ -77,4 +77,66 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
         Assert.Null(revoked.RequestSignature);
         Assert.Throws<NotSupportedException>(() => (revoked with { Status = ApprovalReadbackV1.Active }).Validate());
     }
+
+    /// <summary>
+    /// An <c>occurred_at</c> with a seventh fractional digit (100 ns) makes the evaluated
+    /// <c>valid_until</c> finer than PostgreSQL <c>timestamptz</c>. The first Inserted return
+    /// must still be the stored row, byte-equal to the exact reader and to a replay.
+    /// Time is injected deterministically; it never depends on the host clock precision.
+    /// </summary>
+    [Theory, Trait("Category", "Integration")]
+    [InlineData(1234567L, false)]
+    [InlineData(1234575L, false)]
+    [InlineData(9999995L, false)]
+    [InlineData(1234567L, true)]
+    public async Task FirstInsertedReturnEqualsPersistedRowForSeventhFractionalDigit(long ticks, bool execute)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var database = await PolicyApprovalTestDatabase.CreateAsync(cancellationToken);
+        await database.AppendRuntimeStateAsync(State(SoulA, DeviceA, AccountA), cancellationToken);
+        using var evaluationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var revocationSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var service = database.CreateService(evaluationSigner, revocationSigner);
+        var reader = new PolicyApprovalAuthoritativeClient(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var occurredAt = new DateTimeOffset(now.Ticks - now.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero)
+            .AddSeconds(-3)
+            .AddTicks(ticks);
+        var evaluation = SignEvaluation(
+            evaluationSigner,
+            Proposal(SoulA, DeviceA, AccountA, $"idem-digit7-{ticks}-{execute}", occurredAt: occurredAt),
+            execute: execute);
+        Assert.NotEqual(0, evaluation.Request.ValidUntil.Ticks % 10);
+        var before = await database.CountOwnedRowsAsync(cancellationToken);
+
+        var issued = await service.EvaluateSignedAsync(evaluation, cancellationToken);
+        Assert.Equal(PolicyApprovalAppendDisposition.Inserted, issued.Disposition);
+        var insertedWire = ApprovalReadbackV1Codec.Serialize(issued.Snapshot.ToReadbackV1());
+        var exactWire = ApprovalReadbackV1Codec.Serialize(
+            (await reader.ReadAsync(ReadRequest(issued.Snapshot), cancellationToken)).ToReadbackV1());
+        Assert.Equal(exactWire, insertedWire);
+
+        // PostgreSQL truncates to microseconds (never rounds up past the evaluated bound).
+        var truncated = new DateTimeOffset(
+            evaluation.Request.ValidUntil.Ticks - evaluation.Request.ValidUntil.Ticks % 10, TimeSpan.Zero);
+        var stored = await database.ReadDecisionColumnsAsync(issued.Snapshot.Approval.ApprovalId, cancellationToken);
+        Assert.Equal(truncated, stored.ValidUntil);
+        Assert.True(stored.ValidUntil < evaluation.Request.ValidUntil);
+        Assert.Equal(truncated, issued.Snapshot.ValidUntil);
+        Assert.Equal(execute, issued.Snapshot.Approval.Decision == ApprovalDecisionV1.Approved && !issued.Snapshot.Approval.ShadowOnly);
+        Assert.Equal(!execute, issued.Snapshot.Approval.Decision == ApprovalDecisionV1.Denied && issued.Snapshot.Approval.ShadowOnly);
+
+        var afterFirst = await database.CountOwnedRowsAsync(cancellationToken);
+        string[] decisionTables = ["approval_decisions", "approval_status_revisions", "approval_idempotency_receipts", "approval_outbox"];
+        foreach (var (table, count) in afterFirst)
+        {
+            var added = decisionTables.Contains(table) || (execute && table == "policy_rate_consumptions") ? 1 : 0;
+            Assert.True(before[table] + added == count, $"{table}: expected {before[table] + added}, observed {count}");
+        }
+
+        var replay = await service.EvaluateSignedAsync(evaluation, cancellationToken);
+        Assert.Equal(PolicyApprovalAppendDisposition.DuplicateNoOp, replay.Disposition);
+        Assert.Equal(insertedWire, ApprovalReadbackV1Codec.Serialize(replay.Snapshot.ToReadbackV1()));
+        Assert.Equal(afterFirst, await database.CountOwnedRowsAsync(cancellationToken));
+    }
 }

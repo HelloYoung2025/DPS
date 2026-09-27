@@ -714,6 +714,16 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             decisionJson, cancellationToken);
         await InjectAsync(PolicyApprovalMutationStage.OutboxWritten, cancellationToken);
         await InjectAsync(PolicyApprovalMutationStage.BeforeCommit, cancellationToken);
+        // Return what PostgreSQL stored (timestamptz keeps microseconds), exactly as the
+        // duplicate branch and the exact reader do, so the first return equals every later read.
+        var inserted = await ReadSnapshotAsync(
+            connection,
+            transaction,
+            new PolicyApprovalReadRequest(
+                decision.ApprovalId, decision.ProposalId, decision.SoulId,
+                decision.DeviceBindingId, decision.PlatformAccountId, decision.TraceId,
+                decision.IdempotencyKey, decisionSha256),
+            cancellationToken);
         await EnsureStillValidAsync(
             connection,
             transaction,
@@ -722,20 +732,7 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             "Policy evaluation",
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new PolicyApprovalAppendResult(
-            PolicyApprovalAppendDisposition.Inserted,
-            new PolicyApprovalAuthoritativeSnapshot(
-                decision,
-                decisionSha256,
-                PolicyApprovalAuthoritativeSnapshot.Active,
-                1,
-                approvalValidUntil,
-                evaluation.Context.RuntimeRevision,
-                evaluation.Context.RuntimeStateSha256,
-                evaluation.Context.ReleaseBomSha256,
-                request.ProposalSha256,
-                2,
-                request.SignatureBase64));
+        return new PolicyApprovalAppendResult(PolicyApprovalAppendDisposition.Inserted, inserted);
     }
 
     public async Task<PolicyApprovalAppendResult> RevokeAsync(

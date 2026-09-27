@@ -1331,14 +1331,14 @@ internal sealed class PolicyApprovalTestDatabase : IAsyncDisposable
         return counts;
     }
 
-    public async Task<(short ProposalContractMajor, string? RequestSignature, string ProposalSha256, string CommandSha256)>
+    public async Task<(short ProposalContractMajor, string? RequestSignature, string ProposalSha256, string CommandSha256, DateTimeOffset ValidUntil)>
         ReadDecisionColumnsAsync(Guid approvalId, CancellationToken cancellationToken)
     {
         await using var connection = new NpgsqlConnection(AdminConnectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
             $"""
-            SELECT proposal_contract_major, request_signature, proposal_sha256, command_sha256
+            SELECT proposal_contract_major, request_signature, proposal_sha256, command_sha256, valid_until
               FROM {SchemaName}.approval_decisions
              WHERE approval_id = @approval_id
             """,
@@ -1350,7 +1350,8 @@ internal sealed class PolicyApprovalTestDatabase : IAsyncDisposable
             reader.GetInt16(0),
             reader.IsDBNull(1) ? null : reader.GetString(1),
             reader.GetString(2),
-            reader.GetString(3));
+            reader.GetString(3),
+            reader.GetFieldValue<DateTimeOffset>(4).ToUniversalTime());
     }
 
     /// <summary>
