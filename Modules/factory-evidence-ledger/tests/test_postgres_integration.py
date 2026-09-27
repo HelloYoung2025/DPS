@@ -60,9 +60,25 @@ PostgresEvidenceRepository = SUBJECT.PostgresEvidenceRepository
 canonical_bytes = SUBJECT.canonical_bytes
 sha256 = SUBJECT.sha256
 
-MIGRATION_URI = os.environ.get("DPS_TEST_POSTGRES_MIGRATION_URI")
-ADMIN_URI = os.environ.get("DPS_TEST_POSTGRES_ADMIN_URI")
-RUNTIME_URI = os.environ.get("DPS_TEST_POSTGRES_RUNTIME_URI")
+DEDICATED_CONNECTION_NAMES = (
+    "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+    "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+)
+LEGACY_CONNECTION_NAMES = (
+    "DPS_TEST_POSTGRES_MIGRATION_URI",
+    "DPS_TEST_POSTGRES_ADMIN_URI",
+    "DPS_TEST_POSTGRES_RUNTIME_URI",
+)
+# Even an empty dedicated value selects the complete dedicated family.
+CONNECTION_NAMES = (
+    DEDICATED_CONNECTION_NAMES
+    if any(name in os.environ for name in DEDICATED_CONNECTION_NAMES)
+    else LEGACY_CONNECTION_NAMES
+)
+MIGRATION_URI, ADMIN_URI, RUNTIME_URI = (
+    os.environ.get(name) for name in CONNECTION_NAMES
+)
 PSQL = os.environ.get("DPS_PSQL") or shutil.which("psql")
 AUTH_KEY_B64 = os.environ.get("DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64")
 AUTH_EPOCH = os.environ.get("DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH")
@@ -119,9 +135,9 @@ class PostgreSQL18IntegrationTests(unittest.TestCase):
     def setUpClass(cls):
         missing = []
         for name, value in (
-            ("DPS_TEST_POSTGRES_MIGRATION_URI", MIGRATION_URI),
-            ("DPS_TEST_POSTGRES_ADMIN_URI", ADMIN_URI),
-            ("DPS_TEST_POSTGRES_RUNTIME_URI", RUNTIME_URI),
+            (CONNECTION_NAMES[0], MIGRATION_URI),
+            (CONNECTION_NAMES[1], ADMIN_URI),
+            (CONNECTION_NAMES[2], RUNTIME_URI),
             ("DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64", AUTH_KEY_B64),
             ("DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH", AUTH_EPOCH),
         ):
@@ -142,6 +158,7 @@ class PostgreSQL18IntegrationTests(unittest.TestCase):
             raise RuntimeError(
                 "INFRA_ERROR: required PostgreSQL 18 and external-auth inputs missing: " + ", ".join(missing)
             )
+        cls._preflight_connections()
         cls._apply_migrations()
         cls._install_auth_key()
         cls.authority = ExternalAppendAuthority.from_environment()
@@ -164,6 +181,44 @@ class PostgreSQL18IntegrationTests(unittest.TestCase):
         if not expect_success and result.returncode == 0:
             raise AssertionError("expected PostgreSQL role/append-only guard to reject operation")
         return result
+
+    @classmethod
+    def _preflight_connections(cls):
+        # Read-only, before migration or key installation on any connection.
+        query = (
+            "SELECT json_build_object("
+            "'version',current_setting('server_version_num'),"
+            "'database',current_database(),'current_user',current_user,"
+            "'session_user',session_user,'address',inet_server_addr(),"
+            "'port',inet_server_port())"
+        )
+        identities = {}
+        targets = set()
+        for name, uri in zip(CONNECTION_NAMES, (MIGRATION_URI, ADMIN_URI, RUNTIME_URI)):
+            try:
+                row = json.loads(cls._psql(uri, "-Atc", query).stdout)
+                if row["version"] != "180004":
+                    raise ValueError("expected PostgreSQL 18.4")
+                if not all(row.get(key) for key in (
+                    "database", "address", "port", "current_user", "session_user"
+                )):
+                    raise ValueError("ambiguous PostgreSQL identity")
+                targets.add((row["database"], row["address"], row["port"]))
+                identities[name] = row
+            except (ValueError, TypeError, KeyError) as exc:
+                raise RuntimeError("invalid PostgreSQL version or target identity") from exc
+        if len(targets) != 1:
+            raise RuntimeError("Ledger connections must identify the same database/server")
+        for name, expected in (
+            (CONNECTION_NAMES[1], "dps_factory_evidence_admin"),
+            (CONNECTION_NAMES[2], "dps_factory_evidence_runtime"),
+        ):
+            row = identities[name]
+            if (row["current_user"], row["session_user"]) != (expected, expected):
+                raise RuntimeError("Ledger PostgreSQL identity mismatch")
+        # A later authorized resource carrier must also bind the migrator identity
+        # and server ownership; equal SQL names alone do not grant authority.
+        cls.preflight_identities = identities
 
     @classmethod
     def _apply_migrations(cls):

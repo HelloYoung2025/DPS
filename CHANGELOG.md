@@ -51,6 +51,24 @@
 - Add a shared owner corpus of 411 stable cases (359 schema-applicable), 417 new Soul Contract cases, eight Ledger Contract cases and six required Python schema methods. Preserve all original tests. Stage I does not execute these tests, SDK/restore, real PG or the 65-stage environment; independent validation and real identity capability remain required.
 - Register the new schema suite with Contract floor 6 and regenerate all three governance snapshots using the existing generator. Two snapshots remain byte-identical because no module or dependency edge is added. Scope remains within the 32 authorized product paths; this is an IMPLEMENTED_UNVERIFIED asset slice, not a P05 package PASS or a P06/P11 real-capability handoff.
 
+### P18-A R7 environment regression coverage
+
+- Exercise the actual Candidate evidence validator through fresh runtime capture, the three module PG requirement union, real preflight/query logic with explicit MOCK psycopg connections, and suite/top-level environment binding rejection. Isolated fixtures retain the selected modules' exact policy entries and floors; no production runner or policy changes.
+- Exercise standalone Ledger setUpClass with complete legacy connections and ordered MOCK preflight/migration/key/authority effects, plus each missing or empty legacy connection failing before all effects. Keep central psycopg and standalone psql seams separate; no real PostgreSQL call is authorized by these tests.
+- Retain candidate C, all R6 environment evidence, the prior CI five legacy-anchor failures and windows floor error, and the old publication caller failure. The external R7 supervisor takes a fresh snapshot at root exit plus EOF; new diagnostic evidence must distinguish its MOCK regression and runtime checks from historical failures. Real PG, cumulative gates, independent QA and formal acceptance remain pending.
+
+### P18-A Ledger PostgreSQL environment wiring
+
+- Give the central Ledger suite a dedicated migration/admin/runtime connection family plus its append key, epoch and psql input. Preserve standalone legacy fallback only when all dedicated keys are absent; empty dedicated values fail closed. Align both policy/evidence schemas and the shared executor allowlist without changing test floors or public v1 contracts.
+- Validate inputs before database calls and read all three PostgreSQL 18.4 target/role identities before migrations or key installation. Add no-PG regressions for family selection, missing/invalid inputs, schema connection classification, actual clean-child forwarding, redaction and native failure status. Preserve SQL/ACL sources, Host/Artifact families, P17 signing and Candidate admission/trust guards.
+- Local Builder execution: all eight Ledger/Host/Artifact no-PG suites pass with 153 methods. Full CI attempts 244 methods, including 12 passing additions, but remains FAIL with five missing external legacy-anchor failures and one existing windows-edge-worker policy/Manifest floor error (contract 9/10, simulation 45/47). Do not lower floors or invent the external anchor. Real PG and cumulative central gates remain NOT_RUN; required verification and independent QA remain PARTIAL/pending. Full native logs and environment evidence accompany the frozen candidate.
+
+### P18A ledger environment integration
+
+- This merge integrates only the frozen P18A (`2aaaaa8`) into the P17-INT candidate `320ce77`; both sides' changelog entries are kept verbatim.
+- It authorizes no release or activation.
+- P18 as a whole remains incomplete.
+
 ### P17A-R3 workspace enumeration correction
 
 - Fix the sealed P17A-QA-F01 finding with explicit no-follow directory enumeration and failure on directory open, iteration, classification or identity errors. Preserve the complete non-Git file set, global digest ordering and all existing Runner signing/currentness/lifecycle boundaries.

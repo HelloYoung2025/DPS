@@ -1480,6 +1480,51 @@ class GovernanceAdversarialTests(unittest.TestCase):
 
 
 class ManifestSuiteRunnerTests(unittest.TestCase):
+
+    def test_ledger_keys_roundtrip_through_real_parser_and_clean_child(self):
+        import dataclasses
+        expected = {
+            "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI": "synthetic-migration",
+            "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI": "synthetic-admin",
+            "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI": "",
+            "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64": "synthetic-key",
+            "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH": "1",
+            "DPS_TEST_POSTGRES_ADMIN_URI": "synthetic-host-admin",
+            "DPS_TEST_POSTGRES_RUNTIME_URI": "synthetic-host-runtime",
+            "DPS_ARTIFACT_BUILDER_ADMIN_DATABASE_URL": "synthetic-artifact-admin",
+            "DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL": "synthetic-artifact-runtime",
+        }
+        target = self.module_root / "tests/test_ledger_environment.py"
+        target.write_text(
+            "import os,unittest\n"
+            "class Environment(unittest.TestCase):\n"
+            "    def test_forwarded(self):\n"
+            "        expected = " + repr(expected) + "\n"
+            "        self.assertEqual(expected, {key: os.environ.get(key) for key in expected})\n"
+            "        self.assertNotIn('P18_UNLISTED_INPUT', os.environ)\n",
+            encoding="utf-8",
+        )
+        plan = self.parse("python3.12 -m unittest Modules/alpha/tests/test_ledger_environment.py")
+        plan = dataclasses.replace(plan, environment=expected)
+        with mock.patch.dict(os.environ, {"P18_UNLISTED_INPUT": "must-not-leak"}):
+            check = execute_manifest_suite(self.fixture.root, plan, timeout_seconds=30)
+        self.assertEqual("PASS", check["status"], check)
+        self.assertEqual(1, check["details"]["executed_tests"])
+
+    def test_infra_error_text_in_real_child_exit_one_stays_fail(self):
+        target = self.module_root / "tests/test_infra_text.py"
+        target.write_text(
+            "import unittest\n"
+            "class Failure(unittest.TestCase):\n"
+            "    def test_failure(self):\n"
+            "        raise RuntimeError('INFRA_ERROR: synthetic error text')\n",
+            encoding="utf-8",
+        )
+        plan = self.parse("python3.12 -m unittest Modules/alpha/tests/test_infra_text.py")
+        check = execute_manifest_suite(self.fixture.root, plan, timeout_seconds=30)
+        self.assertEqual(1, check["exit_code"])
+        self.assertEqual("FAIL", check["status"])
+
     def setUp(self):
         self.fixture = RepositoryFixture()
         self.module_root = self.fixture.add_module("alpha")

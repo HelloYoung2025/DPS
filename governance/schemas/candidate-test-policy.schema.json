@@ -90,6 +90,11 @@
             "uniqueItems": true,
             "items": {
               "enum": [
+                "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+                "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+                "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
+                "DPS_FACTORY_EVIDENCE_APPEND_HMAC_KEY_B64",
+                "DPS_FACTORY_EVIDENCE_APPEND_REVOCATION_EPOCH",
                 "DPS_ARTIFACT_BUILDER_ADMIN_DATABASE_URL",
                 "DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL",
                 "DPS_TEST_POSTGRES",
@@ -118,6 +123,9 @@
                   "minItems": 1,
                   "contains": {
                     "enum": [
+                      "DPS_FACTORY_EVIDENCE_POSTGRES_MIGRATION_URI",
+                      "DPS_FACTORY_EVIDENCE_POSTGRES_ADMIN_URI",
+                      "DPS_FACTORY_EVIDENCE_POSTGRES_RUNTIME_URI",
                       "DPS_ARTIFACT_BUILDER_ADMIN_DATABASE_URL",
                       "DPS_ARTIFACT_BUILDER_RUNTIME_DATABASE_URL",
                       "DPS_TEST_POSTGRES",
