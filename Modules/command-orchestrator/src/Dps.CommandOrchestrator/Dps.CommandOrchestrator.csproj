@@ -13,6 +13,8 @@
   <ItemGroup>
     <EmbeddedResource Include="../../migrations/001_create_command_orchestrator.sql"
                       LogicalName="Dps.CommandOrchestrator.Migrations.001_create_command_orchestrator.sql" />
+    <EmbeddedResource Include="../../migrations/002_restrict_default_function_privileges.sql"
+                      LogicalName="Dps.CommandOrchestrator.Migrations.002_restrict_default_function_privileges.sql" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Dps.CommandOrchestrator.Tests" />

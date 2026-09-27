@@ -1167,8 +1167,10 @@ public sealed class PostgresPolicyApprovalService : IDisposable
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("SELECT clock_timestamp()", connection, transaction) { CommandTimeout = 5 };
-        return ((DateTimeOffset)(await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("PostgreSQL clock was unavailable."))).ToUniversalTime();
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
+            throw new InvalidOperationException("PostgreSQL clock was unavailable.");
+        return reader.GetFieldValue<DateTimeOffset>(0).ToUniversalTime();
     }
 
     private static async Task EnsureStillValidAsync(

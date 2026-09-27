@@ -30,7 +30,10 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
 
         var attestation = await database.ReadRuntimeAttestationAsync();
 
-        Assert.Equal("1", attestation.SchemaVersion);
+        Assert.Equal("2", attestation.SchemaVersion);
+        await database.AssertMigrationLedgerAsync("1", "2");
+        Assert.Equal(CommandDatabase.MigrationDigest("002_restrict_default_function_privileges.sql"), attestation.MigrationSha256);
+        await database.AssertSingleCatalogAttestationAsync(attestation);
         Assert.Matches("^[a-f0-9]{64}$", attestation.MigrationSha256);
         Assert.Matches("^[a-f0-9]{64}$", attestation.CatalogSha256);
         Assert.Equal(180004, attestation.ServerVersionNumber);
@@ -38,6 +41,12 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
         Assert.Equal(database.RuntimeRole, attestation.RuntimeRole);
         Assert.Equal(11, await database.CountRuntimeExecutableApiFunctionsAsync());
         Assert.False(await database.RuntimeHasAnyDirectRelationOrSequencePrivilegeAsync());
+
+        var beforeRestart = await database.ReadInstallationStateAsync();
+        await using var restarted = database.CreateStore();
+        await restarted.InitializeAsync(TestCancellation);
+        Assert.Equal(0, await restarted.GetQuarantineCountAsync(TestCancellation));
+        Assert.Equal(beforeRestart, await database.ReadInstallationStateAsync());
     }
 
     [Fact, Trait("Category", "Integration")]
@@ -51,20 +60,26 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
             TimeSpan.FromMinutes(1), TestCancellation);
         var authorization = Authorization(database, dispatch);
 
+        var leasedRows = await database.ReadAppendOnlyRowsAsync();
         var tableRead = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteRuntimeAsync(
             $"SELECT count(*) FROM {database.QuotedSchema}.commands"));
+        Assert.Equal(leasedRows, await database.ReadAppendOnlyRowsAsync());
         var columnRead = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteRuntimeAsync(
             $"SELECT command_id FROM {database.QuotedSchema}.commands"));
+        Assert.Equal(leasedRows, await database.ReadAppendOnlyRowsAsync());
         var sequenceUse = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteRuntimeAsync(
             $"SELECT nextval('{database.Schema}.attempt_events_event_seq_seq'::regclass)"));
+        Assert.Equal(leasedRows, await database.ReadAppendOnlyRowsAsync());
         var ddl = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteRuntimeAsync(
             $"CREATE TABLE {database.QuotedSchema}.forbidden_runtime_table(id integer)"));
+        Assert.Equal(leasedRows, await database.ReadAppendOnlyRowsAsync());
         Assert.All([tableRead, columnRead, sequenceUse, ddl],
             exception => Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, exception.SqlState));
 
         var forgedDispatch = await Assert.ThrowsAsync<PostgresException>(
             () => database.AttemptRuntimeCredentialOnlyDispatchAsync(dispatch, authorization));
         Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, forgedDispatch.SqlState);
+        Assert.Equal(leasedRows, await database.ReadAppendOnlyRowsAsync());
         Assert.Equal(CommandState.Leased, (await database.Store.GetSnapshotAsync(
             commandId, Soul, Device, Account, TestCancellation)).State);
 
@@ -73,9 +88,11 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
         var authenticReceipt = Receipt(
             database, dispatch, CommandReceiptV1.Success, false, true, true,
             "runtime-credential-only-receipt");
+        var dispatchedRows = await database.ReadAppendOnlyRowsAsync();
         var forgedReceipt = await Assert.ThrowsAsync<PostgresException>(
             () => database.AttemptRuntimeCredentialOnlyReceiptAsync(authenticReceipt));
         Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, forgedReceipt.SqlState);
+        Assert.Equal(dispatchedRows, await database.ReadAppendOnlyRowsAsync());
         Assert.Equal(CommandState.Dispatched, (await database.Store.GetSnapshotAsync(
             commandId, Soul, Device, Account, TestCancellation)).State);
         Assert.Equal(0, await database.CountRowsAsync("signed_receipts"));
@@ -83,11 +100,23 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
 
         var update = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteMigratorAsync(
             $"UPDATE {database.QuotedSchema}.commands SET retry_safe = false"));
+        Assert.Equal(dispatchedRows, await database.ReadAppendOnlyRowsAsync());
         var delete = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteMigratorAsync(
             $"DELETE FROM {database.QuotedSchema}.commands"));
+        Assert.Equal(dispatchedRows, await database.ReadAppendOnlyRowsAsync());
         var truncate = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteMigratorAsync(
             $"TRUNCATE {database.QuotedSchema}.commands"));
-        Assert.All([update, delete, truncate], exception => Assert.Equal("55000", exception.SqlState));
+        Assert.Equal("0A000", truncate.SqlState);
+        Assert.Equal("cannot truncate a table referenced in a foreign key constraint", truncate.MessageText);
+        Assert.Equal(dispatchedRows, await database.ReadAppendOnlyRowsAsync());
+
+        var truncateClosure = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteMigratorAsync(
+            $"TRUNCATE {database.QuotedSchema}.commands, {database.QuotedSchema}.leases, " +
+            $"{database.QuotedSchema}.attempt_events, {database.QuotedSchema}.signed_receipts, " +
+            $"{database.QuotedSchema}.outbox RESTRICT"));
+        Assert.All([update, delete, truncateClosure], exception => Assert.Equal("55000", exception.SqlState));
+        Assert.Equal("command-orchestrator durable records are append-only", truncateClosure.MessageText);
+        Assert.Equal(dispatchedRows, await database.ReadAppendOnlyRowsAsync());
         Assert.Equal(1, await database.CountRowsAsync("commands"));
     }
 
@@ -436,13 +465,65 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
     [Fact, Trait("Category", "Integration")]
     public async Task AppliedMigrationDigestTamperStopsRestartBeforeRuntimeWork()
     {
+        foreach (var version in new[] { "1", "2" })
+        {
+            await using var database = await CommandDatabase.CreateAsync();
+            await database.TamperMigrationDigestAsync(version);
+            var beforeRestart = await database.ReadInstallationStateAsync();
+            await using var restarted = database.CreateStore();
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => restarted.InitializeAsync(TestCancellation));
+            Assert.Equal("Command-orchestrator migration ledger checksum, runtime capability, owner, version, or PostgreSQL attestation does not match.", error.Message);
+            Assert.Equal(beforeRestart, await database.ReadInstallationStateAsync());
+            Assert.Equal(0, await database.CountRowsAsync("commands"));
+        }
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task BaselineOnlyLedgerIsRejectedWithoutUpgradeOrCleanup()
+    {
+        await using var database = await CommandDatabase.CreateUninitializedAsync();
+        await database.InstallBaselineOnlyAsync();
+        await database.AssertMigrationLedgerAsync("1");
+        var before = await database.ReadInstallationStateAsync();
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => database.Store.InitializeAsync(TestCancellation));
+
+        Assert.Equal("Command-orchestrator migration ledger must contain exactly versions 1 and 2.", error.Message);
+        Assert.Equal(before, await database.ReadInstallationStateAsync());
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task UnknownLedgerVersionIsRejectedWithoutRewrite()
+    {
         await using var database = await CommandDatabase.CreateAsync();
-        await database.TamperMigrationDigestAsync();
+        await database.AssertMigrationLedgerAsync("1", "2");
+        await database.ChangeLedgerVersionToUnknownAsync();
+        var before = await database.ReadInstallationStateAsync();
         await using var restarted = database.CreateStore();
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => restarted.InitializeAsync(TestCancellation));
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => restarted.InitializeAsync(TestCancellation));
 
-        Assert.Equal(0, await database.CountRowsAsync("commands"));
+        Assert.Equal("Command-orchestrator migration ledger must contain exactly versions 1 and 2.", error.Message);
+        Assert.Equal(before, await database.ReadInstallationStateAsync());
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task RestoredPublicDefaultFunctionPrivilegeIsRejectedWithoutSelfHealing()
+    {
+        await using var database = await CommandDatabase.CreateAsync();
+        await database.AssertMigrationLedgerAsync("1", "2");
+        Assert.False(await database.DefaultFunctionsAllowPublicExecuteAsync());
+        await database.ExecuteMigratorAsync("ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC");
+        Assert.True(await database.DefaultFunctionsAllowPublicExecuteAsync());
+        var before = await database.ReadInstallationStateAsync();
+        await using var restarted = database.CreateStore();
+
+        var error = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => restarted.InitializeAsync(TestCancellation));
+
+        Assert.Equal("Schema, object, function, sequence, or default ACL is outside the exact allowlist.", error.Message);
+        Assert.True(await database.DefaultFunctionsAllowPublicExecuteAsync());
+        Assert.Equal(before, await database.ReadInstallationStateAsync());
     }
 
     [Fact, Trait("Category", "Integration")]
@@ -876,6 +957,8 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
 
         public static Task<CommandDatabase> CreateAsync() => CreateCoreAsync(true, false);
 
+        public static Task<CommandDatabase> CreateUninitializedAsync() => CreateCoreAsync(false, false);
+
         public static Task<CommandDatabase> CreateRuntimeOwnedSchemaAsync() => CreateCoreAsync(false, true);
 
         private static async Task<CommandDatabase> CreateCoreAsync(bool initialize, bool runtimeOwnedSchema)
@@ -1008,6 +1091,146 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
             {
                 CryptographicOperations.ZeroMemory(payload);
             }
+        }
+
+        private static byte[] MigrationBytes(string file)
+        {
+            using var stream = typeof(PostgresCommandOrchestrator).Assembly.GetManifestResourceStream(
+                "Dps.CommandOrchestrator.Migrations." + file)
+                ?? throw new InvalidOperationException("Embedded test migration is missing.");
+            using var bytes = new MemoryStream();
+            stream.CopyTo(bytes);
+            return bytes.ToArray();
+        }
+
+        public static string MigrationDigest(string file) =>
+            Convert.ToHexStringLower(SHA256.HashData(MigrationBytes(file)));
+
+        public async Task InstallBaselineOnlyAsync()
+        {
+            // A real 001 installation, not a claim that the old product initialized successfully.
+            var sql = Encoding.UTF8.GetString(MigrationBytes("001_create_command_orchestrator.sql"))
+                .Replace("__SCHEMA__", QuotedSchema, StringComparison.Ordinal)
+                .Replace("__RUNTIME_ROLE__", new NpgsqlCommandBuilder().QuoteIdentifier(RuntimeRole), StringComparison.Ordinal)
+                .Replace("__RUNTIME_CAPABILITY_SHA256__", Convert.ToHexStringLower(SHA256.HashData(_runtimeCapability)), StringComparison.Ordinal)
+                .Replace("__MIGRATION_SHA256__", MigrationDigest("001_create_command_orchestrator.sql"), StringComparison.Ordinal);
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var transaction = await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, TestCancellation);
+            await using var command = new NpgsqlCommand(
+                $"CREATE SCHEMA {QuotedSchema};\n" + sql, connection, transaction);
+            await command.ExecuteNonQueryAsync(TestCancellation);
+            await transaction.CommitAsync(TestCancellation);
+        }
+
+        public async Task AssertMigrationLedgerAsync(params string[] expectedVersions)
+        {
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var command = new NpgsqlCommand(
+                $"SELECT schema_version, migration_sha256, runtime_capability_sha256, migrator_role, server_version_num, current_user, session_user FROM {QuotedSchema}.migration_ledger ORDER BY schema_version",
+                connection);
+            await using var reader = await command.ExecuteReaderAsync(TestCancellation);
+            foreach (var version in expectedVersions)
+            {
+                Assert.True(await reader.ReadAsync(TestCancellation));
+                Assert.Equal(version, reader.GetString(0));
+                Assert.Equal(MigrationDigest(version == "1" ? "001_create_command_orchestrator.sql" : "002_restrict_default_function_privileges.sql"), reader.GetString(1));
+                Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(_runtimeCapability)), reader.GetString(2));
+                Assert.Equal(MigratorRole, reader.GetString(3));
+                Assert.Equal(180004, reader.GetInt32(4));
+                Assert.Equal(MigratorRole, reader.GetString(5));
+                Assert.Equal(MigratorRole, reader.GetString(6));
+            }
+            Assert.False(await reader.ReadAsync(TestCancellation));
+        }
+
+        public async Task AssertSingleCatalogAttestationAsync(RuntimeAttestation expected)
+        {
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var command = new NpgsqlCommand(
+                $"SELECT schema_version, migration_sha256, catalog_sha256, server_version_num FROM {QuotedSchema}.catalog_attestations", connection);
+            await using var reader = await command.ExecuteReaderAsync(TestCancellation);
+            Assert.True(await reader.ReadAsync(TestCancellation));
+            Assert.Equal(expected.SchemaVersion, reader.GetString(0));
+            Assert.Equal(expected.MigrationSha256, reader.GetString(1));
+            Assert.Equal(expected.CatalogSha256, reader.GetString(2));
+            Assert.Equal(expected.ServerVersionNumber, reader.GetInt32(3));
+            Assert.False(await reader.ReadAsync(TestCancellation));
+        }
+
+        public async Task<string> ReadAppendOnlyRowsAsync()
+        {
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var command = new NpgsqlCommand(
+                $"""
+                WITH rows(table_name, payload) AS (
+                    SELECT 'commands', to_jsonb(value)::text FROM {QuotedSchema}.commands AS value
+                    UNION ALL SELECT 'leases', to_jsonb(value)::text FROM {QuotedSchema}.leases AS value
+                    UNION ALL SELECT 'attempt_events', to_jsonb(value)::text FROM {QuotedSchema}.attempt_events AS value
+                    UNION ALL SELECT 'signed_receipts', to_jsonb(value)::text FROM {QuotedSchema}.signed_receipts AS value
+                    UNION ALL SELECT 'outbox', to_jsonb(value)::text FROM {QuotedSchema}.outbox AS value)
+                SELECT table_name, payload FROM rows ORDER BY table_name COLLATE "C", payload COLLATE "C"
+                """, connection);
+            var rows = new List<string>();
+            await using var reader = await command.ExecuteReaderAsync(TestCancellation);
+            while (await reader.ReadAsync(TestCancellation)) rows.Add(reader.GetString(0) + ":" + reader.GetString(1));
+            return string.Join('\n', rows);
+        }
+
+        public async Task<string> ReadInstallationStateAsync()
+        {
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var command = new NpgsqlCommand(
+                $"""
+                WITH objects AS (SELECT oid FROM pg_class WHERE relnamespace = @schema::regnamespace),
+                state(kind, value) AS (
+                    SELECT 'ledger', to_jsonb(value)::text FROM {QuotedSchema}.migration_ledger AS value
+                    UNION ALL SELECT 'attestation', to_jsonb(value)::text FROM {QuotedSchema}.catalog_attestations AS value
+                    UNION ALL SELECT 'schema', to_jsonb(value)::text FROM pg_namespace AS value WHERE nspname = @schema
+                    UNION ALL SELECT 'relation', to_jsonb(value)::text FROM pg_class AS value WHERE oid IN (SELECT oid FROM objects)
+                    UNION ALL SELECT 'column', to_jsonb(value)::text FROM pg_attribute AS value WHERE attrelid IN (SELECT oid FROM objects)
+                    UNION ALL SELECT 'constraint', to_jsonb(value)::text FROM pg_constraint AS value WHERE connamespace = @schema::regnamespace
+                    UNION ALL SELECT 'trigger', to_jsonb(value)::text FROM pg_trigger AS value WHERE tgrelid IN (SELECT oid FROM objects)
+                    UNION ALL SELECT 'function', to_jsonb(value)::text FROM pg_proc AS value WHERE pronamespace = @schema::regnamespace
+                    UNION ALL SELECT 'default_acl', to_jsonb(value)::text FROM pg_default_acl AS value WHERE defaclrole = @migrator::regrole
+                    UNION ALL SELECT 'role', to_jsonb(value)::text FROM pg_roles AS value WHERE rolname IN (@migrator, @runtime))
+                SELECT kind, value FROM state ORDER BY kind COLLATE "C", value COLLATE "C"
+                """, connection);
+            command.Parameters.AddWithValue("schema", Schema);
+            command.Parameters.AddWithValue("migrator", MigratorRole);
+            command.Parameters.AddWithValue("runtime", RuntimeRole);
+            var rows = new List<string>();
+            await using var reader = await command.ExecuteReaderAsync(TestCancellation);
+            while (await reader.ReadAsync(TestCancellation)) rows.Add(reader.GetString(0) + ":" + reader.GetString(1));
+            return string.Join('\n', rows);
+        }
+
+        public Task ChangeLedgerVersionToUnknownAsync() => ExecuteMigratorAsync(
+            $"ALTER TABLE {QuotedSchema}.migration_ledger DROP CONSTRAINT migration_schema_version_exact; " +
+            $"ALTER TABLE {QuotedSchema}.migration_ledger ADD CONSTRAINT migration_schema_version_exact CHECK (schema_version IN ('1', '2', '3')); " +
+            $"ALTER TABLE {QuotedSchema}.migration_ledger DISABLE TRIGGER migration_ledger_no_row_mutation; " +
+            $"UPDATE {QuotedSchema}.migration_ledger SET schema_version = '3' WHERE schema_version = '2'; " +
+            $"ALTER TABLE {QuotedSchema}.migration_ledger ENABLE TRIGGER migration_ledger_no_row_mutation");
+
+        public async Task<bool> DefaultFunctionsAllowPublicExecuteAsync()
+        {
+            await using var connection = new NpgsqlConnection(_migratorConnectionString);
+            await connection.OpenAsync(TestCancellation);
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM aclexplode(COALESCE(
+                        (SELECT defaclacl FROM pg_default_acl
+                         WHERE defaclrole = current_user::regrole AND defaclnamespace = 0 AND defaclobjtype = 'f'),
+                        acldefault('f', current_user::regrole))) AS acl
+                    WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')
+                """, connection);
+            return (bool)(await command.ExecuteScalarAsync(TestCancellation)
+                ?? throw new InvalidOperationException("Default function ACL probe returned NULL."));
         }
 
         public async Task<RuntimeAttestation> ReadRuntimeAttestationAsync()
@@ -1272,11 +1495,11 @@ public sealed class PostgresCommandOrchestratorIntegrationTests
         public Task MakeAttemptEventSequenceDescendAsync() => ExecuteMigratorAsync(
             $"ALTER SEQUENCE {QuotedSchema}.attempt_events_event_seq_seq RESTART WITH 100 INCREMENT BY -1");
 
-        public async Task TamperMigrationDigestAsync()
+        public async Task TamperMigrationDigestAsync(string version)
         {
             await ExecuteMigratorAsync(
                 $"ALTER TABLE {QuotedSchema}.migration_ledger DISABLE TRIGGER migration_ledger_no_row_mutation; " +
-                $"UPDATE {QuotedSchema}.migration_ledger SET migration_sha256 = repeat('9', 64); " +
+                $"UPDATE {QuotedSchema}.migration_ledger SET migration_sha256 = repeat('9', 64) WHERE schema_version = '{version}'; " +
                 $"ALTER TABLE {QuotedSchema}.migration_ledger ENABLE TRIGGER migration_ledger_no_row_mutation");
         }
 

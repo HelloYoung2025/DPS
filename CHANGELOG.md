@@ -2,6 +2,9 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P04 repair and P05 R3 local integration
+- Merge the frozen P05 R3 Soul-current line `5ab9aab` (first parent) with the frozen P04 repair integration `4d19d3f` as a local construction baseline. Product behavior does not change; both lines' unfinished acceptance, retained failures and null formal verification remain; release and activation are not authorized.
+
 ### P05 Soul-current R3 quarantined four-role session
 
 - Remove the Host→Soul runtime factory import; use the Soul-owned closed AF_UNIX lease envelope for Host/provider and Host/host-auth traffic. Configuration v2 separates Host/provider identities while preserving v1 assets and signature bytes.
@@ -16,11 +19,58 @@
 - Register the existing signer fixture in the solution and name the original Soul test project explicitly in all three required .NET suite commands without changing categories or floors.
 - Host-to-Soul runtime composition governance, signer artifact coverage, P11 and global gate obligations remain unfinished; these repairs do not activate production or issue a verification level.
 
+### P04 local repair integration
+
+- Combine the frozen authorization assets and scoped Host, Command, Policy, and Audit repairs for composite local validation. Prior global gate failures, Proposed profile limits, and null formal verification remain; this integration does not authorize release or activation.
+
 ### Control Plane Host PostgreSQL catalog attestation
 
 - Rename the column-collation query alias so PostgreSQL 18.4 can parse runtime schema attestation without changing catalog, ACL, or runtime-role requirements.
 - Attest PostgreSQL 18.4 constraint inheritance by type: CHECK constraints remain inheritable, while foreign, primary, and unique keys remain non-inheritable; unknown kinds fail closed.
 - Require a successful healthy runtime attestation in each existing catalog/ACL tamper case before applying its mutation, so an unrelated earlier rejection cannot satisfy the negative assertion. Add a native CHECK NO INHERIT negative case with a test-only matching definition comment to isolate the inheritance check.
+
+### Command Orchestrator fixed cold-bootstrap v2
+
+- Keep the single-table foreign-key TRUNCATE rejection and separately exercise the append-only trigger with the explicit five-table reference closure, comparing complete business rows before and after rejected mutations.
+
+- Return the runtime login identity as explicit text in migration 002 attestation, preserving `session_user` under SECURITY DEFINER and matching the declared result type.
+
+- Use a non-keyword PostgreSQL collation alias in catalog attestation SQL, preserving the catalog fields, joins, ordering, and digest framing.
+
+- Preserve immutable migration 001 and append 002 to harden the restricted migrator's default function permissions, with exact per-migration ledger checks and v2 catalog/runtime attestation.
+- Install only into an empty module schema; existing v1, unknown, or drifted installations fail closed without automatic upgrade or ACL cleanup. Rollback does not downgrade a v2 database for an older BOM.
+- Retain the original PostgreSQL scenarios and add precise legacy/unknown-ledger and restored-PUBLIC-default rejection checks, with healthy restart and both migration checksums verified.
+
+### Command Orchestrator PostgreSQL catalog type mapping
+
+- Cast the five PostgreSQL internal-char catalog projections to text before Npgsql reads them as strings, allowing healthy initialization and restart to reach the existing exact catalog and privilege checks.
+- Sort ACL rows using the original grantee expression and grantor column, avoiding PostgreSQL output-alias resolution errors inside collated ordering while retaining the exact ACL allowlist.
+- Extend the existing real PostgreSQL healthy-initialization test with a fresh Store restart and runtime read. Preserve the 21 integration scenarios, security comparisons, migration, catalog digest, role boundaries, and dependency pins.
+
+### Policy Approval PostgreSQL clock reads
+
+- Read both shared PostgreSQL clocks through Npgsql's typed UTC `DateTimeOffset` reader, preserving their transaction, lock placement, expiry boundaries, and fail-closed behavior.
+- Exercise the submission append-only guard with a real pending attempt created through the existing signed test lifecycle. Keep the single-table foreign-key refusal and separately reach the five-table TRUNCATE trigger, checking its exact failure and unchanged complete row snapshots.
+- Preserve the intended adversarial checks by writing canonical UTC timestamps in raw lifecycle fixtures and explicitly retaining the exhausted budget in the combined rate/platform-denial fixture.
+- Correct the integration fixture's expectation for inline attack text: the real evaluation entry rejects malformed selector references without changing any of its six persisted row counts, while a valid opaque reference round-trips as ordinary data.
+
+### Audit golden expectation repair
+
+- Bind the existing receipt and relay golden assertions to the independently reviewed Audit-local profile preimages; preserve fixtures and production bytes. Candidate-local validation covers locked builds, full Unit/Contract/real PostgreSQL suites and the cumulative gate; the Proposed profile, unresolved signer/authScope integration, global failures and formal verification limits remain separate.
+
+### Proposed Audit relay canonical profile
+
+- Document the Audit-local v1 receipt/relay byte profile, complete independently derived reference preimages and digests, Command receipt ownership, validation boundaries, and unresolved signer/authScope integration. This is a Proposed compatibility design only; production code, existing golden expectations and their Contract failure remain unchanged pending separate reviewed implementation.
+
+### Audit test input repair
+
+- Separate rejected receipt identifiers from the low-level delimiter framing counterexample, verify real P-256 signature non-reuse between valid receipts with the same ID, and reuse the original idempotency seed for the PostgreSQL same-scope conflict test. Production guards/canonicalizers and golden expectations remain unchanged; the unresolved golden-vector Contract failure still blocks full acceptance.
+
+### P04 existing authorization v1 assets
+
+- Align the Command operations guide and Manifest permission wording with Policy as the sole authorization contract owner while Command retains envelope construction and wire production.
+- Move the sole execution-authorization DTO, original payload validation and authorization canonicalizer into Policy.Contracts, with byte-preserved schema and machine canonical JSON. Command retains wire production, dispatch/hash/lease ownership and its existing signer consumer port; its old canonical entry forwards through a one-way package reference. The historical DTO namespace preserves source usage, without claiming old binary compatibility.
+- Rebind Command/Gateway consumers, Policy provider/receiver declarations, reciprocal signing relay and generated governance. Required suites, active/quarantine modes and proposed/release-ineligible runtime state remain unchanged. Typed signing, strict codec/corpus, durable provenance, production Policy/Host composition and wider P04/P08 acceptance remain separate work; no signing activation or formal verification level is issued.
 
 ### Proposed P04 authorization contract ownership
 

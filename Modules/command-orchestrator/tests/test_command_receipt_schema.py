@@ -8,7 +8,8 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = MODULE_ROOT / "contracts" / "provided"
-SCHEMA_FILES = tuple(sorted(SCHEMA_ROOT.glob("*.schema.json")))
+SCHEMA_FILES = (*sorted(SCHEMA_ROOT.glob("*.schema.json")),
+                MODULE_ROOT.parent / "policy-approval" / "contracts" / "provided" / "execution.authorization.v1.schema.json")
 ABSOLUTE_SHA256_PATTERN = r"^[a-f0-9]{64}$(?![\s\S])"
 ABSOLUTE_VERSION_PATTERN = r"^1(?:\.[0-9]+){0,2}$(?![\s\S])"
 ABSOLUTE_SIGNATURE_PATTERN = r"^[A-Za-z0-9+/]{86}==$(?![\s\S])"

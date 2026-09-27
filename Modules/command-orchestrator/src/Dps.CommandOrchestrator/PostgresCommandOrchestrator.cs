@@ -97,7 +97,9 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
 {
     private const string MigrationResource =
         "Dps.CommandOrchestrator.Migrations.001_create_command_orchestrator.sql";
-    private const string SchemaVersion = "1";
+    private const string DefaultPrivilegesMigrationResource =
+        "Dps.CommandOrchestrator.Migrations.002_restrict_default_function_privileges.sql";
+    private const string SchemaVersion = "2";
     private const int MaximumAttempts = 3;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly JsonSerializerOptions DatabaseJson = new()
@@ -279,7 +281,8 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
     {
         ThrowIfDisposed();
         using var timeout = CreateTimeout(cancellationToken);
-        var (migration, migrationSha256) = ReadMigration();
+        var (baselineMigration, baselineMigrationSha256) = ReadMigration(MigrationResource);
+        var (migration, migrationSha256) = ReadMigration(DefaultPrivilegesMigrationResource);
         await using var connection = new NpgsqlConnection(_options.MigratorConnectionString);
         await connection.OpenAsync(timeout.Token);
         await ConfigureSessionAsync(connection, timeout.Token);
@@ -320,9 +323,13 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
                 if (schemaStatus.ObjectCount != 0)
                     throw new InvalidOperationException(
                         "A pre-existing command-orchestrator schema without a trusted migration ledger is not empty.");
-                var rendered = migration
+                var rendered = baselineMigration
                     .Replace("__SCHEMA__", QuotedSchema, StringComparison.Ordinal)
                     .Replace("__RUNTIME_ROLE__", QuoteIdentifier(_options.RuntimeRole), StringComparison.Ordinal)
+                    .Replace("__RUNTIME_CAPABILITY_SHA256__", _runtimeCapabilitySha256, StringComparison.Ordinal)
+                    .Replace("__MIGRATION_SHA256__", baselineMigrationSha256, StringComparison.Ordinal);
+                rendered += "\n" + migration
+                    .Replace("__SCHEMA__", QuotedSchema, StringComparison.Ordinal)
                     .Replace("__RUNTIME_CAPABILITY_SHA256__", _runtimeCapabilitySha256, StringComparison.Ordinal)
                     .Replace("__MIGRATION_SHA256__", migrationSha256, StringComparison.Ordinal);
                 await using var migrate = Command(rendered, connection, transaction);
@@ -330,6 +337,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
                 await AssertMigrationLedgerAsync(
                     connection,
                     transaction,
+                    baselineMigrationSha256,
                     migrationSha256,
                     timeout.Token);
                 await AssertCatalogShapeAndPrivilegesAsync(
@@ -353,6 +361,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
                 await AssertMigrationLedgerAsync(
                     connection,
                     transaction,
+                    baselineMigrationSha256,
                     migrationSha256,
                     timeout.Token);
                 await AssertCatalogShapeAndPrivilegesAsync(
@@ -1060,6 +1069,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
     private async Task AssertMigrationLedgerAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
+        string expectedBaselineMigrationSha256,
         string expectedMigrationSha256,
         CancellationToken cancellationToken)
     {
@@ -1068,24 +1078,26 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
             connection,
             transaction);
         await using var reader = await ExecuteReaderAsync(command, cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidDataException("Command-orchestrator migration ledger is missing.");
-        var schemaVersion = reader.GetString(0);
-        var migrationSha256 = reader.GetString(1);
-        var runtimeCapabilitySha256 = reader.GetString(2);
-        var migratorRole = reader.GetString(3);
-        var serverVersion = reader.GetInt32(4);
-        if (await reader.ReadAsync(cancellationToken))
-            throw new InvalidDataException("Command-orchestrator migration ledger is ambiguous.");
-        if (!string.Equals(schemaVersion, SchemaVersion, StringComparison.Ordinal)
-            || !FixedDigestEquals(migrationSha256, expectedMigrationSha256)
-            || !FixedDigestEquals(runtimeCapabilitySha256, _runtimeCapabilitySha256)
-            || !string.Equals(migratorRole, _options.MigratorRole, StringComparison.Ordinal)
-            || serverVersion != PostgresCommandOrchestratorOptions.RequiredPostgresVersionNumber)
+        foreach (var (expectedVersion, expectedDigest) in new[]
         {
-            throw new InvalidDataException(
-                "Command-orchestrator migration ledger checksum, runtime capability, owner, version, or PostgreSQL attestation does not match.");
+            ("1", expectedBaselineMigrationSha256),
+            (SchemaVersion, expectedMigrationSha256)
+        })
+        {
+            if (!await reader.ReadAsync(cancellationToken)
+                || !string.Equals(reader.GetString(0), expectedVersion, StringComparison.Ordinal))
+                throw new InvalidDataException("Command-orchestrator migration ledger must contain exactly versions 1 and 2.");
+            if (!FixedDigestEquals(reader.GetString(1), expectedDigest)
+                || !FixedDigestEquals(reader.GetString(2), _runtimeCapabilitySha256)
+                || !string.Equals(reader.GetString(3), _options.MigratorRole, StringComparison.Ordinal)
+                || reader.GetInt32(4) != PostgresCommandOrchestratorOptions.RequiredPostgresVersionNumber)
+            {
+                throw new InvalidDataException(
+                    "Command-orchestrator migration ledger checksum, runtime capability, owner, version, or PostgreSQL attestation does not match.");
+            }
         }
+        if (await reader.ReadAsync(cancellationToken))
+            throw new InvalidDataException("Command-orchestrator migration ledger must contain exactly versions 1 and 2.");
     }
 
     private async Task InsertCatalogAttestationAsync(
@@ -1152,7 +1164,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
         var tables = new HashSet<string>(StringComparer.Ordinal);
         await using (var command = Command(
             """
-            SELECT object.relname, owner.rolname, object.relpersistence,
+            SELECT object.relname, owner.rolname, object.relpersistence::text,
                    object.relrowsecurity, object.relforcerowsecurity,
                    has_table_privilege(@runtime_role, object.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'),
                    EXISTS (SELECT 1 FROM aclexplode(COALESCE(object.relacl, acldefault('r', object.relowner))) AS acl WHERE acl.grantee = 0)
@@ -1332,7 +1344,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
         var triggers = new HashSet<string>(StringComparer.Ordinal);
         await using (var command = Command(
             """
-            SELECT trigger_value.tgname, trigger_value.tgenabled,
+            SELECT trigger_value.tgname, trigger_value.tgenabled::text,
                    trigger_function.proname, trigger_owner.rolname
             FROM pg_trigger AS trigger_value
             JOIN pg_class AS object ON object.oid = trigger_value.tgrelid
@@ -1375,8 +1387,8 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
                    sequence_parameters.seqstart, sequence_parameters.seqincrement,
                    sequence_parameters.seqmax, sequence_parameters.seqmin,
                    sequence_parameters.seqcache, sequence_parameters.seqcycle,
-                   owned_table.relname, owned_column.attname, owned_column.attidentity,
-                   ownership.deptype, format_type(sequence_parameters.seqtypid, -1)
+                   owned_table.relname, owned_column.attname, owned_column.attidentity::text,
+                   ownership.deptype::text, format_type(sequence_parameters.seqtypid, -1)
             FROM pg_class AS sequence_value
             JOIN pg_namespace AS namespace ON namespace.oid = sequence_value.relnamespace
             JOIN pg_roles AS owner ON owner.oid = sequence_value.relowner
@@ -1434,7 +1446,7 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
         var indexes = new HashSet<string>(StringComparer.Ordinal);
         await using (var command = Command(
             """
-            SELECT index_value.relname, owner.rolname, index_value.relpersistence
+            SELECT index_value.relname, owner.rolname, index_value.relpersistence::text
             FROM pg_class AS index_value
             JOIN pg_namespace AS namespace ON namespace.oid = index_value.relnamespace
             JOIN pg_roles AS owner ON owner.oid = index_value.relowner
@@ -1563,7 +1575,8 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
             LEFT JOIN pg_roles AS grantee ON grantee.oid = acl_rows.grantee_oid
             JOIN pg_roles AS grantor ON grantor.oid = acl_rows.grantor_oid
             ORDER BY acl_rows.kind COLLATE "C", acl_rows.object_name COLLATE "C",
-                     grantee_name COLLATE "C", grantor_name COLLATE "C",
+                     CASE WHEN acl_rows.grantee_oid = 0 THEN 'PUBLIC' ELSE grantee.rolname END COLLATE "C",
+                     grantor.rolname COLLATE "C",
                      acl_rows.privilege_type COLLATE "C"
             """, connection, transaction);
         command.Parameters.AddWithValue("schema_name", _options.Schema);
@@ -1650,12 +1663,12 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
                 SELECT 'column', jsonb_build_array(object.relname, column_value.attname,
                     format_type(column_value.atttypid, column_value.atttypmod), column_value.attnotnull,
                     COALESCE(pg_get_expr(default_value.adbin, default_value.adrelid), ''),
-                    COALESCE(collation.collname, ''), COALESCE(column_value.attacl::text, ''))::text
+                    COALESCE(collation_value.collname, ''), COALESCE(column_value.attacl::text, ''))::text
                 FROM pg_attribute AS column_value
                 JOIN pg_class AS object ON object.oid = column_value.attrelid
                 JOIN pg_namespace AS namespace ON namespace.oid = object.relnamespace
                 LEFT JOIN pg_attrdef AS default_value ON default_value.adrelid = object.oid AND default_value.adnum = column_value.attnum
-                LEFT JOIN pg_collation AS collation ON collation.oid = column_value.attcollation AND column_value.attcollation <> 0
+                LEFT JOIN pg_collation AS collation_value ON collation_value.oid = column_value.attcollation AND column_value.attcollation <> 0
                 WHERE namespace.nspname = @schema_name AND column_value.attnum > 0 AND NOT column_value.attisdropped
                 UNION ALL
                 SELECT 'constraint', jsonb_build_array(object.relname, constraint_value.conname,
@@ -1727,10 +1740,10 @@ public sealed class PostgresCommandOrchestrator : IDisposable, IAsyncDisposable
         }
     }
 
-    private static (string Text, string Sha256) ReadMigration()
+    private static (string Text, string Sha256) ReadMigration(string resource)
     {
         var assembly = typeof(PostgresCommandOrchestrator).Assembly;
-        using var stream = assembly.GetManifestResourceStream(MigrationResource)
+        using var stream = assembly.GetManifestResourceStream(resource)
             ?? throw new InvalidOperationException("Embedded command-orchestrator migration is missing.");
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);

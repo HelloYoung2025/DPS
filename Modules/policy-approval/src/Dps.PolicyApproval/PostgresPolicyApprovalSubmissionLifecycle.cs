@@ -996,9 +996,10 @@ internal sealed class PostgresPolicyApprovalSubmissionAuthority : IDisposable
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("SELECT clock_timestamp()", connection, transaction) { CommandTimeout = 5 };
-        var value = await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("PostgreSQL did not return its trusted clock.");
-        return ((DateTimeOffset)value).ToUniversalTime();
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0))
+            throw new InvalidOperationException("PostgreSQL did not return its trusted clock.");
+        return reader.GetFieldValue<DateTimeOffset>(0).ToUniversalTime();
     }
 
     private static async Task ConfigureTerminalTransactionAsync(

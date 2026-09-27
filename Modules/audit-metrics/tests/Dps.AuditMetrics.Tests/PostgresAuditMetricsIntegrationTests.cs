@@ -121,7 +121,8 @@ public sealed class PostgresAuditMetricsIntegrationTests
         Assert.Single(results, result => result.Disposition == AuditAppendDisposition.Inserted);
         Assert.Equal(15, results.Count(result => result.Disposition == AuditAppendDisposition.DuplicateNoOp));
 
-        var raceOriginal = Receipt(11, SoulA, DeviceA, AccountA, "idem-digest-race");
+        const string digestRaceIdempotencySeed = "idem-digest-race";
+        var raceOriginal = Receipt(11, SoulA, DeviceA, AccountA, digestRaceIdempotencySeed);
         var sameIdDifferentDigest = raceOriginal with
         {
             EvidenceDigest = new string('b', 64),
@@ -139,7 +140,12 @@ public sealed class PostgresAuditMetricsIntegrationTests
         Assert.Single(digestRace, result => result.Disposition == AuditAppendDisposition.Inserted);
         Assert.Single(digestRace, result => result.Disposition == AuditAppendDisposition.Quarantined);
 
-        var sameScopedIdempotency = Receipt(12, SoulA, DeviceA, AccountA, raceOriginal.IdempotencyKey);
+        var sameScopedIdempotency = Receipt(12, SoulA, DeviceA, AccountA, digestRaceIdempotencySeed);
+        Assert.Equal(raceOriginal.SoulId, sameScopedIdempotency.SoulId);
+        Assert.Equal(raceOriginal.DeviceBindingId, sameScopedIdempotency.DeviceBindingId);
+        Assert.Equal(raceOriginal.PlatformAccountId, sameScopedIdempotency.PlatformAccountId);
+        Assert.Equal(raceOriginal.IdempotencyKey, sameScopedIdempotency.IdempotencyKey);
+        Assert.NotEqual(raceOriginal.ReceiptId, sameScopedIdempotency.ReceiptId);
         var idempotencyConflict = await service.AppendReceiptAsync(
             sameScopedIdempotency,
             SignEnvelope(signer, UnsignedEnvelope(sameScopedIdempotency)),

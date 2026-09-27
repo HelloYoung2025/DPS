@@ -28,6 +28,12 @@
         "type": "Project"
       },
       "dps.commandorchestrator.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "Dps.PolicyApproval.Contracts": "[0.6.0, )"
+        }
+      },
+      "dps.policyapproval.contracts": {
         "type": "Project"
       }
     }

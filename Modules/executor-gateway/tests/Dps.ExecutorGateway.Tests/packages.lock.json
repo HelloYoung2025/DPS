@@ -158,14 +158,17 @@
         }
       },
       "dps.commandorchestrator.contracts": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Dps.PolicyApproval.Contracts": "[0.6.0, )"
+        }
       },
       "dps.executorgateway": {
         "type": "Project",
         "dependencies": {
-          "Dps.CommandOrchestrator.Contracts": "[0.1.0, )",
+          "Dps.CommandOrchestrator.Contracts": "[0.2.0, )",
           "Dps.ExecutorGateway.Contracts": "[0.1.0, )",
-          "Dps.PolicyApproval.Contracts": "[0.3.0, )"
+          "Dps.PolicyApproval.Contracts": "[0.6.0, )"
         }
       },
       "dps.executorgateway.contracts": {

@@ -18,6 +18,8 @@ Read root `AGENTS.md`, this file, `module.yaml`, all provided and consumed contr
 
 ## Invariants
 
+- Policy uniquely owns the existing `execution.authorization/v1` DTO, schema and authorization canonicalizer. The DTO retains its historical CLR namespace for source usage, but is defined only in Policy.Contracts; Policy must not reference Command or Compiler. Command remains the wire producer and owns dispatch/hash/lease state. This asset migration preserves v1 bytes and validation semantics, adds no strict codec or typed signing request, and does not implement a production execution-authorization signer. The existing Command consumer signer port remains until the separately authorized P08 adapter/provider work.
+
 - `SOUL-ISO-001`: proposal and evaluation scope must match exactly.
 - `CMD-IDEMP-001`: an approval ID is deterministic for the same scoped policy evaluation.
 - `RESULT-VERIFY-001`: approval does not prove execution success.
