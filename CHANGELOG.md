@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P05 Soul-current R4 evidence supplement
+
+- Add tests only: both signer public Opens reject with `AUTHORITY_UNAVAILABLE`; Host EOF or pipelined bytes while the real provider waits on the PG lock, the current signer or release yields no `acquire/acquired` or `dispose/ack`; a lost unlock or readback result on a real owner connection cannot confirm release.
+- Product source, contracts, fixtures, manifests and suite floors are unchanged. The required P11 failure and all R3 limits remain; this does not award a verification level or authorize production.
+
 ### P05 Soul-current R3 quarantined four-role session
 
 - Remove the Host→Soul runtime factory import; use the Soul-owned closed AF_UNIX lease envelope for Host/provider and Host/host-auth traffic. Configuration v2 separates Host/provider identities while preserving v1 assets and signature bytes.

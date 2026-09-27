@@ -75,6 +75,22 @@ public sealed class SoulCurrentCompositionTests
         Assert.Throws<SoulRegistryException>(() => SoulCurrentProviderService.Open());
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("host-auth")]
+    [InlineData("current")]
+    public void SignerPublicFactoryHasNoCallerRootAndAlwaysRejects(string role)
+    {
+        Assert.Empty(typeof(SoulCurrentSigningService).GetConstructors());
+        var open = role == "host-auth" ? nameof(SoulCurrentSigningService.OpenHostAuthenticationService) : nameof(SoulCurrentSigningService.OpenCurrentService);
+        Assert.Empty(typeof(SoulCurrentSigningService).GetMethod(open)!.GetParameters());
+        // Same unprovisioned environment as the provider factory case; these entries read no installation at all.
+        Assert.False(File.Exists("/Library/Application Support/DPS/soul-current/bootstrap.v1.json"));
+        var error = Assert.Throws<SoulRegistryException>(() => role == "host-auth"
+            ? SoulCurrentSigningService.OpenHostAuthenticationService() : SoulCurrentSigningService.OpenCurrentService());
+        Assert.Equal("AUTHORITY_UNAVAILABLE", error.Message);
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public void HeldFileAndDirectoryDescriptorsDetectRealAclAndRestoreWithoutModeFallback()
