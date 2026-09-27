@@ -324,6 +324,76 @@ public sealed class WorkerDrainReceiptIssuerTests
         Assert.Equal(0, workerSigner.SignCalls);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R1", "true")]
+    public async Task Overlapping_admissions_exits_and_reconciliation_drain_before_signing()
+    {
+        using var runtime = new DrainReceiptTemporaryRuntimeDirectory();
+        using var supervisorKey = RSA.Create(2048);
+        using var workerSigner = new TestWorkerDrainSigningAuthority();
+        using var workerPublicKey = workerSigner.CreatePublicKey();
+        using var store = new BlockingClaimStateStore();
+        await using var receiptStore = DurableWorkerDrainReceiptStore.Open(runtime.Path);
+        await using var journal = await OpenJournalAsync(runtime.Path, failAfterFirstDurableAppend: false);
+        var token = TestContext.Current.CancellationToken;
+        var command = WorkerTests.Command();
+        var allEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseNative = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = 0;
+        var native = new LeaseRegressionTransport(async (_, cancellationToken) =>
+        {
+            if (Interlocked.Increment(ref entered) == 24) allEntered.SetResult();
+            await releaseNative.Task.WaitAsync(cancellationToken);
+            return new NativeDispatchResult(true, NativeStatus.Success, true, "verified");
+        });
+        var processor = new CommandProcessor(native, journal, store, new FixedTimeProvider(command.OccurredAt!.Value));
+        var claims = Task.Run(() => processor.ReconcilePreparedCompletionsAsync(token), token);
+        var commands = Enumerable.Range(0, 24).Select(index => Task.Run(async () =>
+        {
+            // Fast exits overlap admissions for different commands on real scheduler threads.
+            Assert.Equal("REJECTED", (await processor.ProcessAsync(command with { SchemaVersion = "2.0" }, token)).ResultStatus);
+            var unique = WorkerTests.WithHash(command with { IdempotencyKey = "idem_" + index.ToString("x64", CultureInfo.InvariantCulture) });
+            return await processor.ProcessAsync(unique, token);
+        }, token)).ToArray();
+        Task<WorkerDrainReceiptIssuanceResult>? issuance = null;
+        var expectation = Expectation();
+        try
+        {
+            Assert.True(store.WaitUntilClaimed(TimeSpan.FromSeconds(10)));
+            await allEntered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            var issuer = new WorkerDrainReceiptIssuer(processor, journal, receiptStore, workerSigner,
+                new SequenceTimeProvider(Start, Start.AddSeconds(3)));
+            var directive = CreateDirective(supervisorKey, expectation, Start, TimeSpan.FromMinutes(2));
+            issuance = Task.Run(() => issuer.IssueAsync(directive, expectation, supervisorKey, token), token);
+            releaseNative.TrySetResult();
+            var results = await Task.WhenAll(commands);
+            Assert.All(results, result => Assert.Equal("VERIFIED_SUCCESS", result.ResultStatus));
+            processor.StopIntake();
+            Assert.False(processor.IsDrained); // The original reconcile pass is still admitted.
+            Assert.Equal(0, workerSigner.SignCalls);
+        }
+        finally
+        {
+            releaseNative.TrySetResult();
+            store.ReleaseClaim();
+            await Task.WhenAll(commands);
+            await claims;
+        }
+        var result = await issuance!.WaitAsync(TimeSpan.FromSeconds(10), token);
+        var verified = WorkerDrainReceiptContractCodec.DecodeAndVerify(result.ExactWorkerReceiptWireUtf8,
+            ReceiptExpectation(expectation), workerPublicKey, Start.AddSeconds(3));
+        Assert.Equal(result.WorkerReceiptWireSha256, verified.WireSha256);
+        Assert.True(processor.IsDrained);
+        Assert.Equal(24, native.Calls);
+        Assert.Equal(1, workerSigner.SignCalls);
+        var persisted = receiptStore.ReadExisting(expectation.DrainId);
+        Assert.NotNull(persisted);
+        Assert.Equal(WorkerDrainReceiptPersistenceState.Committed, persisted.State);
+        Assert.Equal(result.ExactWorkerReceiptWireUtf8, persisted.ExactWireUtf8);
+    }
+
     private static CommandProcessor Processor(EdgeLocalJournalAdapter journal) => new(
         new NeverDispatchTransport(),
         journal,

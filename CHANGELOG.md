@@ -2,6 +2,9 @@
 
 ## [Unreleased] - 2026-09-14
 
+### U4 local integration: P10 R2 into U4 M1
+- Merge the frozen P10 REVIEW-FIX-R2 head `1536e38` into U4 M1 (first parent). Only frozen lines are merged; product behavior does not change; this does not authorize release or activation.
+
 ### U4 local integration: P05 R4 into U3
 - Merge the frozen P05 R4 evidence supplement `1f991fa` into the frozen U3 integration head `f91d1dc` (first parent). Only frozen lines are merged; product behavior does not change; this does not authorize release or activation.
 
@@ -19,6 +22,20 @@
 - Verify actual role-loaded artifacts; keep all public entries fail-closed and production routing disabled. Independent Host/provider/two-signer synthetic launchers freeze their merged generation before startup.
 - Require fresh Host-bound final status and confirmed owner-backend unlock/close before ACK, then recheck budget/cancellation/signature windows. Bound failure cleanup without claiming uncontrolled remote tasks stopped.
 - Retain R1/R2 evidence, required P11 failure and all unrelated global gate obligations. This change does not award a verification level, finish P05/P06/P11 or authorize production.
+
+### P10 REVIEW-FIX-R2 held completion duplicates and exact detail assertions
+
+- Return the exact retryable same-epoch `IN_PROGRESS` receipt for an actively owned unacknowledged `CompletionPrepared` (SHADOWED, or FAILED without dispatch) in every lease and clock state instead of a `REJECTED` that contradicted the pending durable terminal. The path cannot reach native; every new native attempt still revalidates clock and lease.
+- Align the operations README with same-epoch duplicate truth and add memory/durable ProcessAsync regressions for both outcomes with fresh and expired leases, plus durable clock-rollback cases.
+- Replace length-range detail assertions with exact per-exit text for Journal entries, receipts, reopen and encoding, and add empty/malformed exception and null/malformed retry-result rows. No wire, schema, Manifest, lock, Supervisor or Journal change.
+- Independent QA, cumulative Candidate gate, external review, Windows/device evidence, production activation and release remain separate requirements; development checks do not issue a formal verification level.
+
+### P10 REVIEW-FIX-R1 completion concurrency and receipt boundary
+
+- Pair command/reconciliation admission counts with atomic exits; give normal and recovered prepared completions one process-local active owner, with failure/cancellation cleanup and epoch fencing in both stores. Preserve exact Journal replay and retry budgets.
+- Recompute receipt source hashes, fail closed on unknown store statuses, and project unusable diagnostic detail deterministically without changing native-result truth. Preserve historical prepared payload/hash bytes, including empty detail; project only outgoing receipt text.
+- Add memory/durable concurrency, retry/cancellation, drain-signing, byte-preserving reopen, attempt-budget and wire-boundary regressions. Keep the original 3e47 no-Manifest-change history and later P18-B floor integration intact; this repair changes neither manifests nor owner schemas, dependencies, locks or pins.
+- Independent QA, cumulative Candidate gate, Windows/device evidence, production activation and release remain separate requirements; development checks do not issue a formal verification level.
 
 ### P05 Soul-current bounded R2 repairs
 

@@ -1027,6 +1027,7 @@ internal sealed class FailOnceFinalizeStore(ICommandStateStore inner) : ICommand
     }
     public IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long processEpoch) =>
         inner.ClaimPreparedCompletions(processEpoch);
+    public void ReleasePreparedCompletionClaim(string key, long epoch) => inner.ReleasePreparedCompletionClaim(key, epoch);
     public CommandDrainSnapshot GetDrainSnapshot() => inner.GetDrainSnapshot();
 }
 
@@ -1037,50 +1038,50 @@ internal sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
 
 internal sealed class BlockingClaimStateStore : ICommandStateStore, IDisposable
 {
+    private readonly InMemoryCommandStateStore inner = new();
     private readonly ManualResetEventSlim _claimEntered = new(false);
     private readonly ManualResetEventSlim _releaseClaim = new(false);
 
-    public long BeginProcessEpoch() => 1;
+    public long BeginProcessEpoch() => inner.BeginProcessEpoch();
 
     public IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long processEpoch)
     {
-        if (processEpoch != 1)
-            throw new InvalidOperationException("unexpected process epoch");
         _claimEntered.Set();
         _releaseClaim.Wait();
-        return [];
+        return inner.ClaimPreparedCompletions(processEpoch);
     }
 
-    public CommandDrainSnapshot GetDrainSnapshot() => new(0, 0, 0);
+    public void ReleasePreparedCompletionClaim(string key, long epoch) => inner.ReleasePreparedCompletionClaim(key, epoch);
+    public CommandDrainSnapshot GetDrainSnapshot() => inner.GetDrainSnapshot();
 
     public bool WaitUntilClaimed(TimeSpan timeout) => _claimEntered.Wait(timeout);
 
     public void ReleaseClaim() => _releaseClaim.Set();
 
     public BeginResult? ReadExisting(string idempotencyKey, string requestSha256, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.ReadExisting(idempotencyKey, requestSha256, processEpoch);
     public BeginResult TryBegin(string idempotencyKey, string requestSha256, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.TryBegin(idempotencyKey, requestSha256, processEpoch);
     public void MarkAccepted(string idempotencyKey, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.MarkAccepted(idempotencyKey, processEpoch);
     public int MarkTransportAttempted(string idempotencyKey, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.MarkTransportAttempted(idempotencyKey, processEpoch);
     public void MarkPreDispatchRetry(string idempotencyKey, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.MarkPreDispatchRetry(idempotencyKey, processEpoch);
     public void MarkDispatchAcknowledged(string idempotencyKey, long processEpoch) =>
-        throw new NotSupportedException();
+        inner.MarkDispatchAcknowledged(idempotencyKey, processEpoch);
     public void PrepareCompletion(
         string idempotencyKey,
         long processEpoch,
         WorkerJournalContext journalContext,
         CommandReceipt receipt,
         WorkerJournalWrite terminalWrite) =>
-        throw new NotSupportedException();
+        inner.PrepareCompletion(idempotencyKey, processEpoch, journalContext, receipt, terminalWrite);
     public void FinalizeCompletion(
         string idempotencyKey,
         long processEpoch,
         WorkerJournalAppendReceipt journalReceipt) =>
-        throw new NotSupportedException();
+        inner.FinalizeCompletion(idempotencyKey, processEpoch, journalReceipt);
 
     public void Dispose()
     {
@@ -1096,6 +1097,367 @@ internal static class WorkerTestHash
 
     public static string Sha256(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(StrictUtf8.GetBytes(value)));
+}
+
+public sealed class ReviewFixRegressionTests
+{
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    public async Task Prepared_recovery_has_one_active_owner(bool firstBatch, bool secondBatch, bool seedFailure) =>
+        await AssertPreparedOwnerAsync(new InMemoryCommandStateStore(), firstBatch, secondBatch, seedFailure);
+
+    internal static async Task AssertPreparedOwnerAsync(
+        ICommandStateStore store, bool firstBatch, bool secondBatch, bool seedFailure)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var command = WorkerTests.Command();
+        var owner = new InMemoryJournal();
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminalCalls = 0;
+        var journal = new LeaseRegressionJournal(owner, async request =>
+        {
+            if (request.EntryType != "VERIFIED_SUCCESS") return;
+            var call = Interlocked.Increment(ref terminalCalls);
+            if (seedFailure && call == 1) throw new IOException("prepared recovery fixture");
+            entered.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        });
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var processor = new CommandProcessor(native, journal, store, clock);
+        if (seedFailure) await Assert.ThrowsAsync<IOException>(() => processor.ProcessAsync(command, token));
+        Task first = firstBatch ? processor.ReconcilePreparedCompletionsAsync(token) : processor.ProcessAsync(command, token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
+        try
+        {
+            if (secondBatch) Assert.Equal(0, await processor.ReconcilePreparedCompletionsAsync(token));
+            else
+            {
+                var active = await processor.ProcessAsync(command, token);
+                Assert.Equal("UNKNOWN_OUTCOME", active.ResultStatus);
+                Assert.True(active.DispatchAcknowledged);
+                Assert.Null(active.PostconditionVerified);
+                Assert.False(active.RetryAllowed);
+                _ = WorkerExchangeCodec.EncodeReceipt(command, active, clock.Now);
+            }
+            Assert.Equal(seedFailure ? 2 : 1, terminalCalls);
+            processor.StopIntake();
+            Assert.False(processor.IsDrained);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await first;
+        }
+        Assert.Equal(1, native.Calls);
+        Assert.Single(owner.States, state => state == "VERIFIED_SUCCESS");
+        Assert.Single(owner.Writes.Where(write => write.EntryType == "VERIFIED_SUCCESS").Distinct());
+        Assert.True(processor.IsDrained);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    public void Old_epoch_cleanup_cannot_release_new_completion_owner() =>
+        AssertCompletionEpochFence(new InMemoryCommandStateStore());
+
+    internal static void AssertCompletionEpochFence(ICommandStateStore store)
+    {
+        var command = WorkerTests.Command();
+        var oldEpoch = store.BeginProcessEpoch();
+        var key = command.IdempotencyKey!;
+        var hash = command.RequestSha256!;
+        store.TryBegin(key, hash, oldEpoch);
+        store.MarkAccepted(key, oldEpoch);
+        var receipt = new CommandReceipt(command.CommandId, key, "SHADOWED", false, null, null, false, false, "shadow");
+        store.PrepareCompletion(key, oldEpoch, WorkerJournalContext.FromCommand(command), receipt,
+            WorkerJournalWrite.Create(command, "TERMINAL", "SHADOWED", "shadow"));
+        Assert.Empty(store.ClaimPreparedCompletions(oldEpoch));
+        var nextEpoch = store.BeginProcessEpoch();
+        Assert.Equal("RECONCILE_COMPLETION", store.TryBegin(key, hash, nextEpoch).Status);
+        store.ReleasePreparedCompletionClaim(key, oldEpoch);
+        Assert.Equal("IN_PROGRESS", store.ReadExisting(key, hash, nextEpoch)!.Status);
+        Assert.Empty(store.ClaimPreparedCompletions(nextEpoch));
+        store.ReleasePreparedCompletionClaim(key, nextEpoch);
+        Assert.Single(store.ClaimPreparedCompletions(nextEpoch));
+        store.ReleasePreparedCompletionClaim(key, nextEpoch);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    public async Task Batch_failure_or_cancellation_releases_unprocessed_claims(bool failAppend) =>
+        await AssertBatchReleaseAsync(new InMemoryCommandStateStore(), failAppend);
+
+    internal static async Task AssertBatchReleaseAsync(ICommandStateStore store, bool failAppend)
+    {
+        var token = TestContext.Current.CancellationToken;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var command = WorkerTests.Command();
+        var other = WorkerTests.WithHash(command with { IdempotencyKey = "idem_" + new string('f', 64) });
+        var seed = true;
+        var interrupt = true;
+        var owner = new InMemoryJournal();
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var journal = new LeaseRegressionJournal(owner, request =>
+        {
+            if (request.EntryType != "VERIFIED_SUCCESS") return Task.CompletedTask;
+            if (seed) throw new IOException("seed prepared");
+            if (interrupt)
+            {
+                interrupt = false;
+                if (failAppend) throw new IOException("batch append interrupted");
+                cancellation.Cancel();
+            }
+            return Task.CompletedTask;
+        });
+        var processor = new CommandProcessor(native, journal, store, new LeaseRegressionClock(command.OccurredAt!.Value));
+        await Assert.ThrowsAsync<IOException>(() => processor.ProcessAsync(command, token));
+        await Assert.ThrowsAsync<IOException>(() => processor.ProcessAsync(other, token));
+        seed = false;
+        if (failAppend)
+            await Assert.ThrowsAsync<IOException>(() => processor.ReconcilePreparedCompletionsAsync(cancellation.Token));
+        else
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processor.ReconcilePreparedCompletionsAsync(cancellation.Token));
+        Assert.Equal(failAppend ? 2 : 1, await processor.ReconcilePreparedCompletionsAsync(token));
+        Assert.Equal(0, await processor.ReconcilePreparedCompletionsAsync(token));
+        Assert.Equal(2, native.Calls);
+        Assert.Equal(2, owner.States.Count(state => state == "VERIFIED_SUCCESS"));
+        Assert.Equal(2, owner.Writes.Where(write => write.EntryType == "VERIFIED_SUCCESS").Distinct().Count());
+        processor.StopIntake();
+        Assert.True(processor.IsDrained);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    public async Task Failed_finalize_is_retryable_without_new_epoch() =>
+        await AssertFinalizeRetryAsync(new InMemoryCommandStateStore());
+
+    internal static async Task AssertFinalizeRetryAsync(ICommandStateStore store)
+    {
+        var command = WorkerTests.Command();
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var journal = new InMemoryJournal();
+        var processor = new CommandProcessor(native, journal, new FailOnceFinalizeStore(store),
+            new LeaseRegressionClock(command.OccurredAt!.Value));
+        var token = TestContext.Current.CancellationToken;
+        await Assert.ThrowsAsync<IOException>(() => processor.ProcessAsync(command, token));
+        var completed = await processor.ProcessAsync(command, token);
+        Assert.Equal("VERIFIED_SUCCESS", completed.ResultStatus);
+        Assert.Equal(1, native.Calls);
+        Assert.Single(journal.States, state => state == "VERIFIED_SUCCESS");
+        Assert.Single(journal.Writes.Where(write => write.EntryType == "VERIFIED_SUCCESS").Distinct());
+        processor.StopIntake();
+        Assert.True(processor.IsDrained);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    public async Task Unknown_store_status_fails_before_execution_mutations(bool duringRead)
+    {
+        var command = WorkerTests.Command();
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore(), beginOverride: (result, read) =>
+            read == duringRead ? new BeginResult("UNRECOGNIZED", CommandExecutionPhase.Reserved, false, 0, null) : result);
+        var native = LeaseRegressionTransport.ForOutcome("success");
+        var journal = new InMemoryJournal();
+        var processor = new CommandProcessor(native, journal, store, new LeaseRegressionClock(command.OccurredAt!.Value));
+        var before = store.Mutations;
+        await Assert.ThrowsAsync<InvalidDataException>(() => processor.ProcessAsync(command, TestContext.Current.CancellationToken));
+        Assert.Equal(before + (duringRead ? 0 : 1), store.Mutations);
+        Assert.Equal(duringRead ? 0 : 1, store.TryBegins);
+        Assert.Equal(0, native.Calls);
+        Assert.Empty(journal.Writes);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("R1", "true")]
+    public void Command_wire_enforces_byte_limit_and_strict_utf8()
+    {
+        var command = WorkerTests.Command();
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(command);
+        var exact = new byte[32768];
+        Array.Fill(exact, (byte)' ');
+        bytes.CopyTo(exact, 0);
+        Assert.Equal(command, WorkerExchangeCodec.DecodeCommand(exact));
+        Assert.Throws<InvalidDataException>(() => WorkerExchangeCodec.DecodeCommand([.. exact, (byte)' ']));
+        var invalid = bytes.ToArray();
+        invalid[Array.IndexOf(invalid, (byte)'1')] = 0xff;
+        Assert.Throws<InvalidDataException>(() => WorkerExchangeCodec.DecodeCommand(invalid));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Contract")]
+    [Trait("R1", "true")]
+    public async Task Journal_duplicate_flag_never_substitutes_for_identity_or_payload_proof(bool duplicate)
+    {
+        var command = WorkerTests.Command();
+        var request = WorkerJournalAppendRequest.Create(WorkerJournalContext.FromCommand(command),
+            WorkerJournalWrite.Create(command, "TERMINAL", "VERIFIED_SUCCESS", "verified"));
+        var receipt = (await new InMemoryJournal().AppendAsync(request, TestContext.Current.CancellationToken)) with { Duplicate = duplicate };
+        WorkerJournalReceiptValidator.Validate(request, receipt);
+        Assert.Throws<InvalidDataException>(() => WorkerJournalReceiptValidator.Validate(request, receipt with { EntryId = "other" }));
+        Assert.Throws<InvalidDataException>(() => WorkerJournalReceiptValidator.Validate(request, receipt with { PayloadSha256 = new string('0', 64) }));
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("null")]
+    [InlineData("oversized")]
+    [InlineData("invalid-unicode")]
+    [InlineData("limit")]
+    [InlineData("normal")]
+    [Trait("Category", "Unit")]
+    [Trait("R1", "true")]
+    [Trait("R2", "true")]
+    public async Task Native_detail_cannot_prevent_terminal_truth_or_receipt_encoding(string kind)
+    {
+        var detail = kind switch
+        {
+            "empty" => "", "null" => null!, "oversized" => new string('x', 4097),
+            "invalid-unicode" => "\ud800", "limit" => new string('x', 4096), _ => "  verified 😀  "
+        };
+        var expected = kind switch
+        {
+            "empty" or "null" => "detail unavailable",
+            "oversized" => "detail omitted: exceeds 4096 characters",
+            "invalid-unicode" => "detail omitted: invalid Unicode",
+            _ => detail
+        };
+        var command = WorkerTests.Command();
+        var native = new LeaseRegressionTransport((_, _) => Task.FromResult(
+            new NativeDispatchResult(true, NativeStatus.Success, true, detail)));
+        var store = new InMemoryCommandStateStore();
+        var journal = new InMemoryJournal();
+        var processor = new CommandProcessor(native, journal, store,
+            new LeaseRegressionClock(command.OccurredAt!.Value));
+        var receipt = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
+        Assert.Equal("VERIFIED_SUCCESS", receipt.ResultStatus);
+        Assert.True(receipt.DispatchAcknowledged);
+        Assert.True(store.GetDrainSnapshot().IsDrained);
+        Assert.Equal(expected, receipt.Detail);
+        Assert.Equal(
+            new[] { ("ACCEPTED", "lease and request validated"), ("DISPATCH_ACKNOWLEDGED", expected), ("VERIFIED_SUCCESS", expected) },
+            journal.Writes.Select(write => (write.EntryType, PayloadDetail(write))));
+        using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(command, receipt, command.OccurredAt.Value));
+        Assert.Equal(expected, wire.RootElement.GetProperty("detail").GetString());
+        Assert.Equal(receipt with { Duplicate = true, RetryAllowed = false }, await processor.ProcessAsync(command, TestContext.Current.CancellationToken));
+        Assert.Equal(1, native.Calls);
+    }
+
+    internal static string PayloadDetail(WorkerJournalAppendRequest write)
+    {
+        using var payload = JsonDocument.Parse(write.PayloadJson);
+        return payload.RootElement.GetProperty("detail").GetString()!;
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("R1", "true")]
+    public void Public_receipt_codec_rejects_wrong_source_hash_and_projects_legacy_empty_detail()
+    {
+        var source = WorkerTests.Command();
+        var receipt = new CommandReceipt(source.CommandId, source.IdempotencyKey, "VERIFIED_SUCCESS",
+            true, NativeStatus.Success, true, false, false, "verified");
+        Assert.Throws<InvalidDataException>(() => WorkerExchangeCodec.EncodeReceipt(
+            source with { RequestSha256 = new string('0', 64) }, receipt, source.OccurredAt!.Value));
+        var legacy = receipt with { Detail = "" };
+        using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(
+            source, legacy, source.LeaseExpiresAt!.Value.AddDays(1)));
+        Assert.False(string.IsNullOrEmpty(wire.RootElement.GetProperty("detail").GetString()));
+        Assert.Equal("", legacy.Detail);
+    }
+
+    [Theory]
+    [InlineData(true, "fresh")]
+    [InlineData(true, "expired")]
+    [InlineData(false, "fresh")]
+    [InlineData(false, "expired")]
+    [Trait("Category", "Unit")]
+    [Trait("R2", "true")]
+    public async Task Held_unacknowledged_completion_duplicate_stays_in_progress(bool shadow, string clockState) =>
+        await AssertHeldUnacknowledgedDuplicateAsync(new InMemoryCommandStateStore(), new InMemoryJournal(), shadow, clockState);
+
+    internal static async Task AssertHeldUnacknowledgedDuplicateAsync(
+        ICommandStateStore store, IWorkerJournal owner, bool shadow, string clockState, Func<Action>? captureDurableBytes = null)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var command = WorkerTests.WithHash(WorkerTests.Command() with { Shadow = shadow });
+        var terminalStatus = shadow ? "SHADOWED" : "FAILED";
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminalCalls = 0;
+        var journal = new LeaseRegressionJournal(owner, async request =>
+        {
+            if (request.EntryType != terminalStatus || Interlocked.Increment(ref terminalCalls) != 1) return;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        });
+        var native = new LeaseRegressionTransport((_, _) => Task.FromResult(
+            new NativeDispatchResult(false, NativeStatus.Failed, false, "not submitted")));
+        var nativeCalls = shadow ? 0 : 2;
+        var tracked = new LeaseRegressionStore(store);
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var processor = new CommandProcessor(native, journal, tracked, clock);
+        var first = processor.ProcessAsync(command, token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            if (clockState == "expired") clock.Now = command.LeaseExpiresAt!.Value;
+            if (clockState == "rollback") clock.Now = command.OccurredAt.Value.AddTicks(-1);
+            var (reads, mutations, tryBegins, appends) = (tracked.Reads, tracked.Mutations, tracked.TryBegins, journal.AppendCalls);
+            var assertDurableBytesUnchanged = captureDurableBytes?.Invoke();
+            var duplicate = await processor.ProcessAsync(command, token);
+            Assert.Equal(new CommandReceipt(command.CommandId, command.IdempotencyKey, "IN_PROGRESS", false, null, null,
+                Duplicate: true, RetryAllowed: true, "prior delivery is active in phase CompletionPrepared"), duplicate);
+            _ = WorkerExchangeCodec.EncodeReceipt(command, duplicate, clock.Now);
+            Assert.Equal(reads + 1, tracked.Reads);
+            Assert.Equal(mutations, tracked.Mutations);
+            Assert.Equal(tryBegins, tracked.TryBegins);
+            Assert.Equal(appends, journal.AppendCalls);
+            Assert.Equal(nativeCalls, native.Calls);
+            assertDurableBytesUnchanged?.Invoke();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10), token));
+        }
+        var completed = await first;
+        Assert.Equal(shadow
+            ? new CommandReceipt(command.CommandId, command.IdempotencyKey, "SHADOWED", false, null, null, false, false,
+                "shadow mode suppressed native dispatch")
+            : new CommandReceipt(command.CommandId, command.IdempotencyKey, "FAILED", false, NativeStatus.Failed, false, false, false,
+                "bounded pre-dispatch retry exhausted: not submitted"), completed);
+        Assert.True(store.GetDrainSnapshot().IsDrained);
+        Assert.Equal(completed with { Duplicate = true, RetryAllowed = false }, await processor.ProcessAsync(command, token));
+        Assert.Equal(1, terminalCalls);
+        Assert.Equal(nativeCalls, native.Calls);
+        if (clockState != "rollback") return;
+        var other = WorkerTests.WithHash(command with { IdempotencyKey = "idem_" + new string('f', 64) });
+        var before = tracked.Mutations;
+        Assert.Equal(new CommandReceipt(other.CommandId, other.IdempotencyKey, "REJECTED", false, null, null, false, false,
+            "trusted UTC clock is non-UTC or moved backwards"), await processor.ProcessAsync(other, token));
+        Assert.Equal(before, tracked.Mutations);
+        Assert.Equal(nativeCalls, native.Calls);
+    }
 }
 
 public sealed class LeaseRegressionTests
@@ -1149,6 +1511,8 @@ public sealed class LeaseRegressionTests
         Assert.Equal(0, native.Calls);
         Assert.Equal("REJECTED", result.ResultStatus);
         Assert.False(result.RetryAllowed);
+        Assert.Equal(boundary == "MarkTransportAttempted" ? 1 : 0,
+            store.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, store.Epoch)!.DispatchAttemptCount);
     }
 
     [Theory]
@@ -1168,11 +1532,13 @@ public sealed class LeaseRegressionTests
                 ? Task.FromException<NativeDispatchResult>(new TransportDispatchException("not submitted", false))
                 : Task.FromResult(new NativeDispatchResult(false, NativeStatus.Failed, false, "not submitted"));
         });
-        var result = await new CommandProcessor(native, new InMemoryJournal(), new InMemoryCommandStateStore(), clock)
+        var store = new LeaseRegressionStore(new InMemoryCommandStateStore());
+        var result = await new CommandProcessor(native, new InMemoryJournal(), store, clock)
             .ProcessAsync(command, TestContext.Current.CancellationToken);
         Assert.Equal(1, native.Calls);
         Assert.Equal("REJECTED", result.ResultStatus);
         Assert.False(result.RetryAllowed);
+        Assert.Equal(1, store.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, store.Epoch)!.DispatchAttemptCount);
     }
 
     [Theory]
@@ -1246,17 +1612,24 @@ public sealed class LeaseRegressionTests
         clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
         var writes = store.Mutations;
         var journalWrites = journal.Writes.Count;
-        foreach (var invalid in new[]
+        foreach (var (invalid, expectedStatus, expectedReads) in new[]
         {
-            command with { RequestSha256 = new string('0', 64) },
-            WorkerTests.WithHash(command with { SoulId = "soul_" + new string('f', 64) }),
-            command with { SoulId = "unknown" },
-            WorkerTests.WithHash(command with { SchemaVersion = "2.0" })
+            (command with { RequestSha256 = new string('0', 64) }, "REJECTED", 0),
+            (WorkerTests.WithHash(command with { SoulId = "soul_" + new string('f', 64) }), "QUARANTINED", 1),
+            (command with { SoulId = "unknown" }, "REJECTED", 0),
+            (WorkerTests.WithHash(command with { SchemaVersion = "2.0" }), "REJECTED", 0)
         })
         {
+            var reads = store.Reads;
             var result = await processor.ProcessAsync(invalid, TestContext.Current.CancellationToken);
-            Assert.Contains(result.ResultStatus, new[] { "REJECTED", "QUARANTINED" });
+            Assert.Equal(expectedStatus, result.ResultStatus);
+            Assert.Equal(reads + expectedReads, store.Reads);
             Assert.False(result.Duplicate);
+            Assert.False(result.DispatchAcknowledged);
+            Assert.Null(result.NativeStatus);
+            Assert.Null(result.PostconditionVerified);
+            Assert.False(result.RetryAllowed);
+            Assert.NotEqual(first.Detail, result.Detail);
         }
         Assert.Equal(writes, store.Mutations);
         Assert.Equal(journalWrites, journal.Writes.Count);
@@ -1285,9 +1658,11 @@ public sealed class LeaseRegressionTests
         try
         {
             var writes = store.Mutations;
+            var appends = journal.AppendCalls;
             var duplicate = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
             Assert.Equal("IN_PROGRESS", duplicate.ResultStatus);
             Assert.Equal(writes, store.Mutations);
+            Assert.Equal(appends, journal.AppendCalls);
         }
         finally
         {
@@ -1332,10 +1707,11 @@ internal sealed class LeaseRegressionClock(DateTimeOffset now) : TimeProvider
 
 internal sealed class LeaseRegressionTransport(Func<WorkerCommand, CancellationToken, Task<NativeDispatchResult>> dispatch) : INativeTransport
 {
-    public int Calls { get; private set; }
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
     public Task<NativeDispatchResult> DispatchAsync(WorkerCommand command, CancellationToken cancellationToken)
     {
-        Calls++;
+        Interlocked.Increment(ref _calls);
         return dispatch(command, cancellationToken);
     }
     public static string ExpectedStatus(string outcome) => outcome switch
@@ -1353,20 +1729,37 @@ internal sealed class LeaseRegressionTransport(Func<WorkerCommand, CancellationT
 
 internal sealed class LeaseRegressionJournal(IWorkerJournal inner, Func<WorkerJournalAppendRequest, Task> after) : IWorkerJournal
 {
+    public int AppendCalls { get; private set; }
     public async Task<WorkerJournalAppendReceipt> AppendAsync(WorkerJournalAppendRequest request, CancellationToken cancellationToken)
     {
+        AppendCalls++;
         var receipt = await inner.AppendAsync(request, cancellationToken);
         await after(request);
         return receipt;
     }
 }
 
-internal sealed class LeaseRegressionStore(ICommandStateStore inner, Action<string>? after = null) : ICommandStateStore
+internal sealed class LeaseRegressionStore(ICommandStateStore inner, Action<string>? after = null,
+    Func<BeginResult?, bool, BeginResult?>? beginOverride = null) : ICommandStateStore
 {
     public int Mutations { get; private set; }
-    public long BeginProcessEpoch() { Mutations++; return inner.BeginProcessEpoch(); }
-    public BeginResult? ReadExisting(string key, string hash, long epoch) => inner.ReadExisting(key, hash, epoch);
-    public BeginResult TryBegin(string key, string hash, long epoch) { Mutations++; return inner.TryBegin(key, hash, epoch); }
+    public int Reads { get; private set; }
+    public int TryBegins { get; private set; }
+    public long Epoch { get; private set; }
+    public long BeginProcessEpoch() { Mutations++; return Epoch = inner.BeginProcessEpoch(); }
+    public BeginResult? ReadExisting(string key, string hash, long epoch)
+    {
+        Reads++;
+        var result = inner.ReadExisting(key, hash, epoch);
+        return beginOverride is null ? result : beginOverride(result, true);
+    }
+    public BeginResult TryBegin(string key, string hash, long epoch)
+    {
+        Mutations++;
+        TryBegins++;
+        var result = inner.TryBegin(key, hash, epoch);
+        return beginOverride is null ? result : beginOverride(result, false)!;
+    }
     public void MarkAccepted(string key, long epoch) { Mutations++; inner.MarkAccepted(key, epoch); after?.Invoke("MarkAccepted"); }
     public int MarkTransportAttempted(string key, long epoch)
     {
@@ -1376,12 +1769,13 @@ internal sealed class LeaseRegressionStore(ICommandStateStore inner, Action<stri
         return attempt;
     }
     public void MarkPreDispatchRetry(string key, long epoch) { Mutations++; inner.MarkPreDispatchRetry(key, epoch); }
-    public void MarkDispatchAcknowledged(string key, long epoch) { Mutations++; inner.MarkDispatchAcknowledged(key, epoch); }
+    public void MarkDispatchAcknowledged(string key, long epoch) { Mutations++; inner.MarkDispatchAcknowledged(key, epoch); after?.Invoke("MarkDispatchAcknowledged"); }
     public void PrepareCompletion(string key, long epoch, WorkerJournalContext context, CommandReceipt receipt, WorkerJournalWrite write)
     { Mutations++; inner.PrepareCompletion(key, epoch, context, receipt, write); }
     public void FinalizeCompletion(string key, long epoch, WorkerJournalAppendReceipt receipt)
     { Mutations++; inner.FinalizeCompletion(key, epoch, receipt); }
     public IReadOnlyList<PreparedCommandCompletion> ClaimPreparedCompletions(long epoch)
     { Mutations++; return inner.ClaimPreparedCompletions(epoch); }
+    public void ReleasePreparedCompletionClaim(string key, long epoch) => inner.ReleasePreparedCompletionClaim(key, epoch);
     public CommandDrainSnapshot GetDrainSnapshot() => inner.GetDrainSnapshot();
 }
