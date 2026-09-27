@@ -1326,6 +1326,7 @@ public sealed class ReviewFixRegressionTests
     [InlineData("normal")]
     [Trait("Category", "Unit")]
     [Trait("R1", "true")]
+    [Trait("R2", "true")]
     public async Task Native_detail_cannot_prevent_terminal_truth_or_receipt_encoding(string kind)
     {
         var detail = kind switch
@@ -1333,22 +1334,38 @@ public sealed class ReviewFixRegressionTests
             "empty" => "", "null" => null!, "oversized" => new string('x', 4097),
             "invalid-unicode" => "\ud800", "limit" => new string('x', 4096), _ => "  verified 😀  "
         };
+        var expected = kind switch
+        {
+            "empty" or "null" => "detail unavailable",
+            "oversized" => "detail omitted: exceeds 4096 characters",
+            "invalid-unicode" => "detail omitted: invalid Unicode",
+            _ => detail
+        };
         var command = WorkerTests.Command();
         var native = new LeaseRegressionTransport((_, _) => Task.FromResult(
             new NativeDispatchResult(true, NativeStatus.Success, true, detail)));
         var store = new InMemoryCommandStateStore();
-        var processor = new CommandProcessor(native, new InMemoryJournal(), store,
+        var journal = new InMemoryJournal();
+        var processor = new CommandProcessor(native, journal, store,
             new LeaseRegressionClock(command.OccurredAt!.Value));
         var receipt = await processor.ProcessAsync(command, TestContext.Current.CancellationToken);
         Assert.Equal("VERIFIED_SUCCESS", receipt.ResultStatus);
         Assert.True(receipt.DispatchAcknowledged);
         Assert.True(store.GetDrainSnapshot().IsDrained);
-        Assert.InRange(receipt.Detail.Length, 1, 4096);
-        if (kind is "normal" or "limit") Assert.Equal(detail, receipt.Detail);
+        Assert.Equal(expected, receipt.Detail);
+        Assert.Equal(
+            new[] { ("ACCEPTED", "lease and request validated"), ("DISPATCH_ACKNOWLEDGED", expected), ("VERIFIED_SUCCESS", expected) },
+            journal.Writes.Select(write => (write.EntryType, PayloadDetail(write))));
         using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(command, receipt, command.OccurredAt.Value));
-        Assert.Equal(receipt.Detail, wire.RootElement.GetProperty("detail").GetString());
+        Assert.Equal(expected, wire.RootElement.GetProperty("detail").GetString());
         Assert.Equal(receipt with { Duplicate = true, RetryAllowed = false }, await processor.ProcessAsync(command, TestContext.Current.CancellationToken));
         Assert.Equal(1, native.Calls);
+    }
+
+    internal static string PayloadDetail(WorkerJournalAppendRequest write)
+    {
+        using var payload = JsonDocument.Parse(write.PayloadJson);
+        return payload.RootElement.GetProperty("detail").GetString()!;
     }
 
     [Fact]
@@ -1366,6 +1383,80 @@ public sealed class ReviewFixRegressionTests
             source, legacy, source.LeaseExpiresAt!.Value.AddDays(1)));
         Assert.False(string.IsNullOrEmpty(wire.RootElement.GetProperty("detail").GetString()));
         Assert.Equal("", legacy.Detail);
+    }
+
+    [Theory]
+    [InlineData(true, "fresh")]
+    [InlineData(true, "expired")]
+    [InlineData(false, "fresh")]
+    [InlineData(false, "expired")]
+    [Trait("Category", "Unit")]
+    [Trait("R2", "true")]
+    public async Task Held_unacknowledged_completion_duplicate_stays_in_progress(bool shadow, string clockState) =>
+        await AssertHeldUnacknowledgedDuplicateAsync(new InMemoryCommandStateStore(), new InMemoryJournal(), shadow, clockState);
+
+    internal static async Task AssertHeldUnacknowledgedDuplicateAsync(
+        ICommandStateStore store, IWorkerJournal owner, bool shadow, string clockState, Func<Action>? captureDurableBytes = null)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var command = WorkerTests.WithHash(WorkerTests.Command() with { Shadow = shadow });
+        var terminalStatus = shadow ? "SHADOWED" : "FAILED";
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminalCalls = 0;
+        var journal = new LeaseRegressionJournal(owner, async request =>
+        {
+            if (request.EntryType != terminalStatus || Interlocked.Increment(ref terminalCalls) != 1) return;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        });
+        var native = new LeaseRegressionTransport((_, _) => Task.FromResult(
+            new NativeDispatchResult(false, NativeStatus.Failed, false, "not submitted")));
+        var nativeCalls = shadow ? 0 : 2;
+        var tracked = new LeaseRegressionStore(store);
+        var clock = new LeaseRegressionClock(command.OccurredAt!.Value);
+        var processor = new CommandProcessor(native, journal, tracked, clock);
+        var first = processor.ProcessAsync(command, token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            if (clockState == "expired") clock.Now = command.LeaseExpiresAt!.Value;
+            if (clockState == "rollback") clock.Now = command.OccurredAt.Value.AddTicks(-1);
+            var (reads, mutations, tryBegins, appends) = (tracked.Reads, tracked.Mutations, tracked.TryBegins, journal.AppendCalls);
+            var assertDurableBytesUnchanged = captureDurableBytes?.Invoke();
+            var duplicate = await processor.ProcessAsync(command, token);
+            Assert.Equal(new CommandReceipt(command.CommandId, command.IdempotencyKey, "IN_PROGRESS", false, null, null,
+                Duplicate: true, RetryAllowed: true, "prior delivery is active in phase CompletionPrepared"), duplicate);
+            _ = WorkerExchangeCodec.EncodeReceipt(command, duplicate, clock.Now);
+            Assert.Equal(reads + 1, tracked.Reads);
+            Assert.Equal(mutations, tracked.Mutations);
+            Assert.Equal(tryBegins, tracked.TryBegins);
+            Assert.Equal(appends, journal.AppendCalls);
+            Assert.Equal(nativeCalls, native.Calls);
+            assertDurableBytesUnchanged?.Invoke();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10), token));
+        }
+        var completed = await first;
+        Assert.Equal(shadow
+            ? new CommandReceipt(command.CommandId, command.IdempotencyKey, "SHADOWED", false, null, null, false, false,
+                "shadow mode suppressed native dispatch")
+            : new CommandReceipt(command.CommandId, command.IdempotencyKey, "FAILED", false, NativeStatus.Failed, false, false, false,
+                "bounded pre-dispatch retry exhausted: not submitted"), completed);
+        Assert.True(store.GetDrainSnapshot().IsDrained);
+        Assert.Equal(completed with { Duplicate = true, RetryAllowed = false }, await processor.ProcessAsync(command, token));
+        Assert.Equal(1, terminalCalls);
+        Assert.Equal(nativeCalls, native.Calls);
+        if (clockState != "rollback") return;
+        var other = WorkerTests.WithHash(command with { IdempotencyKey = "idem_" + new string('f', 64) });
+        var before = tracked.Mutations;
+        Assert.Equal(new CommandReceipt(other.CommandId, other.IdempotencyKey, "REJECTED", false, null, null, false, false,
+            "trusted UTC clock is non-UTC or moved backwards"), await processor.ProcessAsync(other, token));
+        Assert.Equal(before, tracked.Mutations);
+        Assert.Equal(nativeCalls, native.Calls);
     }
 }
 

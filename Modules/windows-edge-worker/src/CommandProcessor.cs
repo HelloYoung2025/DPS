@@ -747,8 +747,13 @@ public sealed class CommandProcessor
                     };
                 }
 
-                var freshness = ValidateFreshness(command);
-                if (freshness is not null) return Rejected(command, freshness);
+                // A held unacknowledged prepared completion (SHADOWED or undispatched FAILED) cannot reach native;
+                // lease or clock state must not turn its pending durable terminal into REJECTED.
+                if (begin.Phase != CommandExecutionPhase.CompletionPrepared)
+                {
+                    var freshness = ValidateFreshness(command);
+                    if (freshness is not null) return Rejected(command, freshness);
+                }
 
                 return new CommandReceipt(
                     command.CommandId, command.IdempotencyKey, "IN_PROGRESS", false, null, null,

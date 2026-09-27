@@ -836,9 +836,14 @@ public sealed class DurableHostTests
     [InlineData("exception-false")]
     [InlineData("exception-null")]
     [InlineData("retry-result")]
+    [InlineData("exception-false-empty")]
+    [InlineData("exception-false-invalid")]
+    [InlineData("retry-result-null")]
+    [InlineData("retry-result-invalid")]
     [Trait("Category", "Integration")]
     [Trait("EvidenceKind", "SIMULATION")]
     [Trait("R1", "true")]
+    [Trait("R2", "true")]
     public async Task Detail_projection_preserves_durable_truth_through_reopen(string kind)
     {
         using var runtime = new TemporaryRuntimeDirectory();
@@ -847,9 +852,33 @@ public sealed class DurableHostTests
         var token = TestContext.Current.CancellationToken;
         var detail = kind switch
         {
-            "empty" => "", "null" => null!, "normal" => "  verified 😀  ",
-            "limit" => new string('x', 4096), "invalid-unicode" => "\ud800", _ => new string('x', 4097)
+            "empty" or "exception-false-empty" => "", "null" or "retry-result-null" => null!, "normal" => "  verified 😀  ",
+            "limit" => new string('x', 4096), "invalid-unicode" or "exception-false-invalid" or "retry-result-invalid" => "\ud800",
+            _ => new string('x', 4097)
         };
+        const string unavailable = "detail unavailable";
+        var terminal = kind switch
+        {
+            "empty" or "null" => unavailable,
+            "normal" or "limit" => detail,
+            "invalid-unicode" or "exception-false-invalid" or "retry-result-invalid" => "detail omitted: invalid Unicode",
+            "exception-false-empty" or "retry-result-null" => "bounded pre-dispatch retry exhausted: ",
+            _ => "detail omitted: exceeds 4096 characters"
+        };
+        (string, string) accepted = ("ACCEPTED", "lease and request validated");
+        (string, string)[] expectedWrites = kind switch
+        {
+            "exception-true" or "exception-null" => [accepted, ("UNKNOWN_OUTCOME", terminal)],
+            "exception-false" or "exception-false-invalid" => [accepted, ("PRE_DISPATCH_RETRY", terminal), ("FAILED", terminal)],
+            "exception-false-empty" => [accepted, ("PRE_DISPATCH_RETRY", unavailable), ("FAILED", terminal)],
+            "retry-result" or "retry-result-invalid" =>
+                [accepted, ("PRE_DISPATCH_RETRY", terminal), ("DISPATCH_NOT_ACKNOWLEDGED", terminal), ("FAILED", terminal)],
+            "retry-result-null" => [accepted, ("PRE_DISPATCH_RETRY", "native transport confirmed no dispatch: "),
+                ("DISPATCH_NOT_ACKNOWLEDGED", unavailable), ("FAILED", terminal)],
+            _ => [accepted, ("DISPATCH_ACKNOWLEDGED", terminal), ("VERIFIED_SUCCESS", terminal)]
+        };
+        var retried = kind.StartsWith("exception-false", StringComparison.Ordinal) ||
+            kind.StartsWith("retry-result", StringComparison.Ordinal);
         var native = new LeaseRegressionTransport((_, _) =>
         {
             if (kind == "exception-true")
@@ -857,28 +886,29 @@ public sealed class DurableHostTests
                 clock.Now = command.LeaseExpiresAt!.Value.AddTicks(1);
                 throw new TransportDispatchException(detail, true);
             }
-            if (kind == "exception-false") throw new TransportDispatchException(detail, false);
+            if (kind.StartsWith("exception-false", StringComparison.Ordinal)) throw new TransportDispatchException(detail, false);
             if (kind == "exception-null") throw new TransportDispatchException(detail, null);
-            return Task.FromResult(new NativeDispatchResult(kind != "retry-result", NativeStatus.Success, true, detail));
+            return Task.FromResult(new NativeDispatchResult(!retried, NativeStatus.Success, true, detail));
         });
         CommandReceipt first;
+        var writes = new List<(string, string)>();
         using (var store = DurableCommandStateStore.Open(runtime.Path))
         await using (var owner = await OpenRealJournalAdapterAsync(runtime.Path, token))
         {
             var journal = new LeaseRegressionJournal(owner, request =>
             {
-                using var payload = JsonDocument.Parse(request.PayloadJson);
-                Assert.InRange(payload.RootElement.GetProperty("detail").GetString()!.Length, 1, 4096);
+                writes.Add((request.EntryType, ReviewFixRegressionTests.PayloadDetail(request)));
                 return Task.CompletedTask;
             });
             first = await new CommandProcessor(native, journal, store, clock).ProcessAsync(command, token);
             Assert.Equal(kind is "exception-true" or "exception-null" ? "UNKNOWN_OUTCOME" :
-                kind is "exception-false" or "retry-result" ? "FAILED" : "VERIFIED_SUCCESS", first.ResultStatus);
-            Assert.Equal(kind == "exception-null" ? (bool?)null : kind is not ("exception-false" or "retry-result"), first.DispatchAcknowledged);
+                retried ? "FAILED" : "VERIFIED_SUCCESS", first.ResultStatus);
+            Assert.Equal(kind == "exception-null" ? (bool?)null : !retried, first.DispatchAcknowledged);
             Assert.False(first.RetryAllowed);
             Assert.True(store.GetDrainSnapshot().IsDrained);
-            if (kind is "normal" or "limit") Assert.Equal(detail, first.Detail);
-            Assert.Equal(kind is "exception-false" or "retry-result" ? 2 : 1, native.Calls);
+            Assert.Equal(terminal, first.Detail);
+            Assert.Equal(expectedWrites, writes);
+            Assert.Equal(retried ? 2 : 1, native.Calls);
             var epoch = store.BeginProcessEpoch();
             Assert.Equal(native.Calls, store.ReadExisting(command.IdempotencyKey!, command.RequestSha256!, epoch)!.DispatchAttemptCount);
         }
@@ -896,8 +926,9 @@ public sealed class DurableHostTests
             var stateBytes = File.ReadAllBytes(statePath);
             var replay = await processor.ProcessAsync(command, token);
             Assert.Equal(first with { Duplicate = true, RetryAllowed = false }, replay);
+            Assert.Equal(terminal, replay.Detail);
             using var wire = JsonDocument.Parse(WorkerExchangeCodec.EncodeReceipt(command, replay, clock.Now));
-            Assert.Equal(replay.Detail, wire.RootElement.GetProperty("detail").GetString());
+            Assert.Equal(terminal, wire.RootElement.GetProperty("detail").GetString());
             Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
             Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
             Assert.Equal(0, journal.AppendCalls);
@@ -1025,6 +1056,36 @@ public sealed class DurableHostTests
         using var runtime = new TemporaryRuntimeDirectory();
         using var store = DurableCommandStateStore.Open(runtime.Path);
         ReviewFixRegressionTests.AssertCompletionEpochFence(store);
+    }
+
+    [Theory]
+    [InlineData(true, "fresh")]
+    [InlineData(true, "expired")]
+    [InlineData(false, "fresh")]
+    [InlineData(false, "expired")]
+    [InlineData(true, "rollback")]
+    [InlineData(false, "rollback")]
+    [Trait("Category", "Integration")]
+    [Trait("EvidenceKind", "SIMULATION")]
+    [Trait("R2", "true")]
+    public async Task Durable_held_unacknowledged_completion_duplicate_stays_in_progress(bool shadow, string clockState)
+    {
+        using var runtime = new TemporaryRuntimeDirectory();
+        var token = TestContext.Current.CancellationToken;
+        using var store = DurableCommandStateStore.Open(runtime.Path);
+        await using var owner = await OpenRealJournalAdapterAsync(runtime.Path, token);
+        var statePath = System.IO.Path.Combine(runtime.Path, "command-state.jsonl");
+        var journalPath = System.IO.Path.Combine(runtime.Path, "worker-journal.jsonl");
+        await ReviewFixRegressionTests.AssertHeldUnacknowledgedDuplicateAsync(store, owner, shadow, clockState, () =>
+        {
+            var stateBytes = File.ReadAllBytes(statePath);
+            var journalBytes = File.ReadAllBytes(journalPath);
+            return () =>
+            {
+                Assert.Equal(stateBytes, File.ReadAllBytes(statePath));
+                Assert.Equal(journalBytes, File.ReadAllBytes(journalPath));
+            };
+        });
     }
 
     private const string IdempotencyKey =

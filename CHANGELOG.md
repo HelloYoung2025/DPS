@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P10 REVIEW-FIX-R2 held completion duplicates and exact detail assertions
+
+- Return the exact retryable same-epoch `IN_PROGRESS` receipt for an actively owned unacknowledged `CompletionPrepared` (SHADOWED, or FAILED without dispatch) in every lease and clock state instead of a `REJECTED` that contradicted the pending durable terminal. The path cannot reach native; every new native attempt still revalidates clock and lease.
+- Align the operations README with same-epoch duplicate truth and add memory/durable ProcessAsync regressions for both outcomes with fresh and expired leases, plus durable clock-rollback cases.
+- Replace length-range detail assertions with exact per-exit text for Journal entries, receipts, reopen and encoding, and add empty/malformed exception and null/malformed retry-result rows. No wire, schema, Manifest, lock, Supervisor or Journal change.
+- Independent QA, cumulative Candidate gate, external review, Windows/device evidence, production activation and release remain separate requirements; development checks do not issue a formal verification level.
+
 ### P10 REVIEW-FIX-R1 completion concurrency and receipt boundary
 
 - Pair command/reconciliation admission counts with atomic exits; give normal and recovered prepared completions one process-local active owner, with failure/cancellation cleanup and epoch fencing in both stores. Preserve exact Journal replay and retry budgets.
