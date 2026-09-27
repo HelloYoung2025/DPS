@@ -14,7 +14,7 @@ Commands retain exact argv, `shell=False`, the existing environment allowlist an
 
 After every integrity/currentness/cleanup check succeeds, results retain `trusted.test.result/v1`, its identity and digest fields and the existing RSA-PSS payload/domain/salt behavior. Ordinary FAIL/SKIP and timeout/output-limit INFRA_ERROR may retain signed failure diagnostics with `release_allowed=false`. Local crypto tests generate temporary synthetic RSA keys, validate the real result Schema, verify the signature with OpenSSL and reject payload/signature tampering. These tests do not deploy a signer or confer evidence eligibility. Merge request signature coverage remains separate P17B work; consumer implementations and public contracts are unchanged.
 
-`factory_disable_trusted_execution` stops new processes. Rollback routes to the previous signed runner and preserves emitted hashes.
+`factory_disable_trusted_execution` stops new processes.
 # Complete merge request issuance
 
 `TrustedRunner.issue_merge_request(metadata, run_inputs, policy)` accepts a

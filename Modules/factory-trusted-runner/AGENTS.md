@@ -32,4 +32,4 @@ Read root and module AGENTS, this Manifest, all contracts, dependency and compat
 
 ## Communication, tests, and rollout
 
-Consume `instruction.receipt/v1`, `worktree.plan/v1`, `worktree.lease/v1`, and `merge.request/v1`; provide `trusted.test.result/v1`. Test injection, forged roles/checks, stale fences, timeouts, output limits, skip/partial output, symlinks, and exact argv. Shadow runs synthetic fixtures only; rollback routes to the prior signed runner and `factory_disable_trusted_execution` stops new processes.
+Consume `instruction.receipt/v1`, `worktree.plan/v1`, `worktree.lease/v1`, and `merge.request/v1`; provide `trusted.test.result/v1`. Test injection, forged roles/checks, stale fences, timeouts, output limits, skip/partial output, symlinks, and exact argv. Shadow runs synthetic fixtures only; `factory_disable_trusted_execution` stops new processes.
