@@ -1,7 +1,9 @@
 import base64
 import copy
+import datetime as dt
 import hashlib
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -79,10 +81,10 @@ def _mgf1(seed, length):
     return bytes(output[:length])
 
 
-def _sign(message):
+def _sign(message, salt_length=32):
     em_bits = RSA_N.bit_length() - 1
     em_length = (em_bits + 7) // 8
-    salt = hashlib.sha256(b"unit-test-salt" + message).digest()
+    salt = hashlib.sha256(b"unit-test-salt" + message).digest()[:salt_length]
     message_hash = hashlib.sha256(message).digest()
     encoded_hash = hashlib.sha256(b"\x00" * 8 + message_hash + salt).digest()
     padding_length = em_length - len(encoded_hash) - len(salt) - 2
@@ -217,7 +219,7 @@ def resign_result(wrapper):
     return wrapper
 
 
-def resign(request):
+def legacy_resign(request):
     payload = {
         "contract_id": "merge.request-attestation/v1",
         "merge_request_id": request["merge_request_id"],
@@ -240,9 +242,208 @@ def resign(request):
     return request
 
 
+def resign(request):
+    payload = {key: value for key, value in request.items() if key != "runner_attestation"}
+    message = b"dps-merge-request-attestation/v1\n" + canonical_bytes(payload)
+    request["runner_attestation"] = {
+        "algorithm": "rsa-pss-sha256", "key_id": "runner-key-001",
+        "signer_identity": "trusted-runner", "payload_sha256": hashlib.sha256(message).hexdigest(),
+        "signature_value": base64.b64encode(_sign(message)).decode("ascii"),
+    }
+    return request
+
+
+def assert_owner_corpus_case(test, case):
+    """Schema and real Merge entry, using synthetic TEST_ONLY signing authority."""
+    from jsonschema import Draft202012Validator, FormatChecker
+    from referencing import Registry, Resource
+    schema = json.loads((MODULE_ROOT / "contracts/provided/merge.request.v1.schema.json").read_text(encoding="utf-8"))
+    result_schema = json.loads((MODULE_ROOT.parent / "factory-trusted-runner/contracts/provided/trusted.test.result.v1.schema.json").read_text(encoding="utf-8"))
+    checker = FormatChecker()
+
+    @checker.checks("date-time")
+    def timezone_datetime(value):
+        try:
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+        except (AttributeError, ValueError):
+            return False
+
+    validator = Draft202012Validator(schema, format_checker=checker,
+                                    registry=Registry().with_resource(result_schema["$id"], Resource.from_contents(result_schema)))
+    value = copy.deepcopy(case["input"])
+    if case["layer"] == "raw-json":
+        test.assertIsNone(case["expected_schema"])
+        with test.assertRaises(InvalidMergeRequest): controller().evaluate(value)
+        test.assertEqual("UNSUPPORTED_RAW", case["expected_merge_runtime"])
+        return
+    test.assertEqual(case["expected_schema"], validator.is_valid(value))
+    for wrapper in value.get("evidence", []):
+        resign_result(wrapper)
+    resign(value)
+    try:
+        outcome = controller().evaluate(value)["outcome"]
+    except InvalidMergeRequest:
+        outcome = "REJECTED"
+    test.assertEqual(case["expected_merge_runtime"], outcome)
+
+
 class MergeControllerTests(unittest.TestCase):
     def setUp(self):
         self.controller = controller()
+
+    def test_shared_owner_corpus_schema_and_runtime(self):
+        corpus = json.loads((MODULE_ROOT / "tests/fixtures/merge.request.v1.corpus.json").read_text(encoding="utf-8"))
+        self.assertEqual((1, "merge.request/v1"), (corpus["format_version"], corpus["contract_id"]))
+        self.assertEqual(len(corpus["cases"]), len({case["case_id"] for case in corpus["cases"]}))
+        for case in corpus["cases"]:
+            with self.subTest(case_id=case["case_id"]): assert_owner_corpus_case(self, case)
+
+    def assert_refused(self, request):
+        try:
+            decision = self.controller.evaluate(request)
+        except InvalidMergeRequest:
+            return
+        self.assertNotEqual("APPROVED", decision["outcome"])
+
+    def test_complete_profile_covers_every_field_nested_value_and_order(self):
+        original = valid_request(self.controller)
+        original["branch_heads"].append({"module_id": "module-two", "commit": "e" * 40})
+        original["changed_paths"].append("Modules/module-two/src/b.py")
+        original["instruction_receipts"].append({**original["instruction_receipts"][0], "receipt_id": "receipt-002"})
+        resign(original)
+        self.assertEqual("APPROVED", self.controller.evaluate(original)["outcome"])
+
+        def changes(value, path=()):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    yield from changes(child, (*path, key))
+            elif isinstance(value, list):
+                yield path, list(reversed(value)) if len(value) > 1 else [*value, "changed"]
+                for index, child in enumerate(value):
+                    yield from changes(child, (*path, index))
+            else:
+                yield path, (not value if isinstance(value, bool) else value + 1 if isinstance(value, int)
+                             else "changed" if value is None else value + "x")
+
+        observed = set()
+        for path, changed in changes(original):
+            with self.subTest(path=path):
+                forged = copy.deepcopy(original)
+                parent = forged
+                for part in path[:-1]:
+                    parent = parent[part]
+                parent[path[-1]] = changed
+                self.assert_refused(forged)
+                observed.add(path[0])
+        self.assertEqual(set(original), observed)
+        self.assert_refused(legacy_resign(copy.deepcopy(original)))
+
+    def test_resigned_cross_scope_result_is_rejected_for_every_evidence_kind(self):
+        fields = {"soul_id": "soul_" + "3" * 64, "device_binding_id": "db_" + "4" * 32,
+                  "platform_account_id": "pa_" + "5" * 32, "trace_id": "trace_" + "6" * 32}
+        for kind in ("required", "optional", "branch-head"):
+            for field, nonnull in fields.items():
+                for direction in ("to-value", "to-null"):
+                    with self.subTest(kind=kind, field=field, direction=direction):
+                        request = valid_request(self.controller)
+                        if direction == "to-null":
+                            request[field] = nonnull
+                            for wrapper in request["evidence"]:
+                                wrapper["result"][field] = nonnull
+                                resign_result(wrapper)
+                        wrong = copy.deepcopy(request["evidence"][0])
+                        wrong["result"][field] = (None if field != "trace_id" else "trace_" + "7" * 32) if direction == "to-null" else nonnull
+                        if kind == "optional":
+                            wrong["result"].update(check_id="module.optional", suite_id="module.optional", required=False)
+                        elif kind == "branch-head":
+                            wrong["basis"] = "branch-head"
+                            wrong["result"]["tested_commit"] = BRANCH
+                        resign_result(wrong)
+                        request["evidence"].append(wrong)
+                        self.assert_refused(resign(request))
+
+    def test_valid_outer_signature_does_not_replace_inner_checks(self):
+        mutations = {
+            "raw-digest": lambda r: r["evidence"][0]["result"].__setitem__("raw_artifact_sha256", "0" * 64),
+            "inner-signature": lambda r: r["evidence"][0]["result"]["runner_attestation"].__setitem__("signature_value", "A" * 172),
+            "basis": lambda r: r["evidence"][0].__setitem__("basis", "branch-head"),
+            "receipt-status": lambda r: r["instruction_receipts"][0].__setitem__("status", "STALE"),
+            "receipt-diff": lambda r: r["instruction_receipts"][0].__setitem__("diff_fingerprint", "0" * 64),
+            "conflict": lambda r: r["conflicts"]["merge"].append("conflict"),
+            "branch-content": lambda r: r["evidence"][0]["result"].__setitem__("tested_commit", BRANCH),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(case=label):
+                request = valid_request(self.controller)
+                mutate(request)
+                self.assert_refused(resign(request))
+        for field, value in (("trusted_policy_sha256", "0" * 64), ("required_checks_sha256", "0" * 64),
+                             ("suite_id", "module.wrong"), ("required", False), ("release_allowed", False)):
+            with self.subTest(resigned_inner=field):
+                request = valid_request(self.controller)
+                request["evidence"][0]["result"][field] = value
+                resign_result(request["evidence"][0])
+                self.assert_refused(resign(request))
+
+    def test_wrong_signature_parameters_and_domains_fail(self):
+        for field, value in (("key_id", "unknown-key"), ("signer_identity", "other-runner"),
+                             ("algorithm", "hmac-sha256"), ("payload_sha256", "0" * 64),
+                             ("signature_value", base64.b64encode(b"x" * 128).decode("ascii"))):
+            with self.subTest(field=field):
+                request = valid_request(self.controller)
+                request["runner_attestation"][field] = value
+                self.assert_refused(request)
+        for prefix, salt_length in ((b"", 32), (b"other-domain\n", 32), (b"dps-merge-request-attestation/v1\n", 20)):
+            with self.subTest(prefix=prefix, salt_length=salt_length):
+                request = valid_request(self.controller)
+                unsigned = {k: v for k, v in request.items() if k != "runner_attestation"}
+                payload = prefix + canonical_bytes(unsigned)
+                request["runner_attestation"]["payload_sha256"] = hashlib.sha256(payload).hexdigest()
+                request["runner_attestation"]["signature_value"] = base64.b64encode(_sign(payload, salt_length)).decode("ascii")
+                self.assert_refused(request)
+
+    def test_evaluate_freezes_once_and_rejects_original_drift(self):
+        request = valid_request(self.controller)
+        original_store = self.controller._trust_store
+
+        class MutatingStore:
+            def verify(self, record, payload):
+                identity = original_store.verify(record, payload)
+                request["branch_heads"][0]["commit"] = "e" * 40
+                return identity
+
+        self.controller._trust_store = MutatingStore()
+        with self.assertRaisesRegex(InvalidMergeRequest, "changed during evaluation"):
+            self.controller.evaluate(request)
+
+    def test_nonfinite_and_raw_inputs_are_rejected_at_mapping_boundary(self):
+        for number in (float("nan"), float("inf"), float("-inf")):
+            request = valid_request(self.controller)
+            request["evidence"][0]["result"]["timeout_seconds"] = number
+            self.assert_refused(request)
+        for raw in ('{"trace_id":"first","trace_id":"second"}', '{}'):
+            with self.assertRaises(InvalidMergeRequest):
+                self.controller.evaluate(raw)
+
+    def test_unresigned_request_context_is_rejected(self):
+        mutations = (
+            ("soul_id", "soul_" + "3" * 64),
+            ("device_binding_id", "db_" + "4" * 32),
+            ("platform_account_id", "pa_" + "5" * 32),
+            ("trace_id", "trace_" + "6" * 32),
+            ("idempotency_key", "idem_" + "7" * 64),
+            ("occurred_at", "2026-07-14T00:01:00Z"),
+            ("branch_heads", [{"module_id": "module-one", "commit": "e" * 40}]),
+        )
+        for name, value in mutations:
+            with self.subTest(field=name):
+                request = valid_request(self.controller)
+                request[name] = value
+                try:
+                    decision = self.controller.evaluate(request)
+                except InvalidMergeRequest:
+                    continue
+                self.assertNotEqual("APPROVED", decision["outcome"])
 
     def test_valid_merge_head_is_approved_and_idempotent(self):
         request = valid_request(self.controller)

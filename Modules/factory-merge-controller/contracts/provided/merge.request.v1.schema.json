@@ -2,6 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dps.local/contracts/merge.request.v1.schema.json",
   "title": "merge.request/v1",
+  "description": "Sign the complete request excluding only its own top-level runner_attestation. Preserve embedded attestations, nested values and array order. Signed bytes and payload_sha256 both cover the UTF-8 prefix dps-merge-request-attestation/v1 followed by LF, then Python JSON canonical bytes (sort_keys=true, separators=(',', ':'), ensure_ascii=false, allow_nan=false). This is not RFC8785/JCS. Legacy partial projections are rejected. Every evidence result must match the request's soul_id, device_binding_id, platform_account_id and trace_id exactly, including null.",
+  "$comment": "Schema validity is separate from authentication, current authorization and signature validity. Product Mapping inputs cannot recover duplicate keys discarded by an upstream raw JSON decoder. The producer freezes one complete unsigned request for PRE and POST currentness verification; the consumer freezes once for both verification and consumption.",
   "type": "object",
   "additionalProperties": false,
   "required": [

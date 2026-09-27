@@ -1,4 +1,5 @@
 import copy
+import base64
 import datetime as dt
 import importlib.util
 import json
@@ -88,6 +89,18 @@ def valid_trusted_result():
 
 
 class TrustedTestResultContractTests(unittest.TestCase):
+    def test_shared_owner_merge_corpus_schema_and_runtime_boundaries(self):
+        path = MODULE_ROOT.parent / "factory-merge-controller/tests/fixtures/merge.request.v1.corpus.json"
+        corpus = json.loads(path.read_text(encoding="utf-8"))
+        fixture = FIXTURE_MODULE.MergeBatchFixture()
+        try:
+            for case in corpus["cases"]:
+                with self.subTest(case_id=case["case_id"]):
+                    FIXTURE_MODULE.assert_producer_corpus_case(self, case, fixture)
+            self.assertEqual([], fixture.result_signatures + fixture.request_signatures)
+        finally:
+            fixture.close()
+
     @classmethod
     def setUpClass(cls):
         path = (
@@ -108,7 +121,27 @@ class TrustedTestResultContractTests(unittest.TestCase):
     def test_production_runner_output_validates(self):
         fixture = FIXTURE_MODULE.RunnerFixture()
         try:
-            self.validator.validate(fixture.run())
+            with fixture.real_signer() as (signer, verify):
+                fixture.runner = fixture._runner(attestation_issuer=signer)
+                result = fixture.run()
+                self.validator.validate(result)
+                payload = FIXTURE_MODULE.canonical_bytes({k: v for k, v in result.items() if k != "runner_attestation"})
+                self.assertEqual(0, verify(payload, base64.b64decode(result["runner_attestation"]["signature_value"])))
+        finally:
+            fixture.close()
+
+    def test_verified_failed_test_keeps_signed_non_releasing_v1_diagnostic(self):
+        fixture = FIXTURE_MODULE.RunnerFixture()
+        try:
+            fixture.test_file.write_text("import unittest\nclass T(unittest.TestCase):\n    def test_failure(self): self.fail('synthetic expected failure')\n", encoding="utf-8")
+            with fixture.real_signer() as (signer, verify):
+                fixture.runner = fixture._runner(attestation_issuer=signer)
+                result = fixture.run()
+                self.assertEqual("FAIL", result["status"])
+                self.assertFalse(result["release_allowed"])
+                self.validator.validate(result)
+                payload = FIXTURE_MODULE.canonical_bytes({k: v for k, v in result.items() if k != "runner_attestation"})
+                self.assertEqual(0, verify(payload, base64.b64decode(result["runner_attestation"]["signature_value"])))
         finally:
             fixture.close()
 

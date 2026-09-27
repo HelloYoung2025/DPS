@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P17A/P17B mainline integration
+
+- This merge integrates only P17A and P17B (`fede545`) into mainline `afb4f9b`; both sides' changelog entries are kept verbatim.
+- It authorizes no release or activation.
+- P17 as a whole remains PARTIAL.
+
 ### Proposed P04 authorization contract ownership
 
 - Clarify that the proposed Policy-owned signing request declares Policy as both schema provider and receiver consumer at the same major/mode, with Command retained as producer/consumer on a direct reciprocal authenticated edge; no reverse dependency or producer relay flag is introduced.
@@ -44,6 +50,19 @@
 - Separate legal Soul v1 Zulu wire from the unchanged 13-field default-.NET-encoder Ledger audit algorithm. Add eight actual-production-oracle differential cases through the existing friend assembly, without changing production Ledger source, old schemas, ten legacy receipt fixtures or dependency locks.
 - Add a shared owner corpus of 411 stable cases (359 schema-applicable), 417 new Soul Contract cases, eight Ledger Contract cases and six required Python schema methods. Preserve all original tests. Stage I does not execute these tests, SDK/restore, real PG or the 65-stage environment; independent validation and real identity capability remain required.
 - Register the new schema suite with Contract floor 6 and regenerate all three governance snapshots using the existing generator. Two snapshots remain byte-identical because no module or dependency edge is added. Scope remains within the 32 authorized product paths; this is an IMPLEMENTED_UNVERIFIED asset slice, not a P05 package PASS or a P06/P11 real-capability handoff.
+
+### P17A-R3 workspace enumeration correction
+
+- Fix the sealed P17A-QA-F01 finding with explicit no-follow directory enumeration and failure on directory open, iteration, classification or identity errors. Preserve the complete non-Git file set, global digest ordering and all existing Runner signing/currentness/lifecycle boundaries.
+- Add real pre/post permission regressions, enumeration I/O error branches and an independent digest-ordering check in the existing Runner test file. The same real pre-execution test fails on the old implementation after a persistent file mutation and issuer call, and passes after the fix with zero controlled test processes and zero issuer calls. Restore permissions and retain bounded cleanup records.
+- Preserve the original candidate and BLOCKED QA report. The R3 correction remains local diagnostic work pending a new frozen candidate and fresh independent QA; it does not grant acceptance, integration, central gate or production authority.
+
+### P17A Runner post-execution binding
+
+- Freeze Runner request/plan/receipt/lease/policy inputs and recheck current facts, exact HEAD, complete workspace and Manifest before issuance. Read Manifest bytes once per validation with file/parent identity checks; reject expiry equality, revoked facts and protected-input drift with zero issuer calls.
+- Bound POSIX leader/group cleanup and preserve permission/native/timeout facts. Keep signal 0 EPERM as UNKNOWN within the original deadline, require timely actual ESRCH, and retain nonzero-signal errors as terminal failures. Observe group completion after leader exit, include descendant time in the timeout, stop signals after ESRCH and expose synthetic PID/PGID/cleanup records in tests. This does not establish production containment or Windows process-tree control.
+- Disable the static HMAC CLI with exit 2 before execution or key/input reads; recovery requires separately bound independent currentness. Preserve v1 identity/digest/Schema fields and ordinary signed non-releasing FAIL/SKIP/INFRA diagnostics after successful integrity checks. Dynamic fixtures retain real RSA-PSS verification and reject tampering using temporary synthetic keys only.
+- P17A changes only Runner implementation, its existing tests and operations/changelog documents. Public contracts, policies and Merge/Host/Artifact/Ledger implementations remain unchanged. P17B and full consumer/Phase0/Candidate/Windows/device/real-issuer gates remain pending; local Builder checks and candidate publication do not grant QA, acceptance, integration or formal verification status.
 
 ### Soul receipt replay across alias-key rotation
 
@@ -1391,3 +1410,18 @@ Backups/
 - Recheck the trusted UTC clock and lease before every native attempt and after durable attempt persistence. Reject expiry equality, non-UTC clock values and observed rollback; retain consumed attempt budgets and unfinished drain state when no native call was made.
 - Add the public C# ICommandStateStore.ReadExisting member and adapt all six repository implementations, including the new regression adapter. TryBegin still reserves/claims; no unknown external binary compatibility is asserted. No wire, Journal format, owner contract, Manifest, lock or wrapper changes.
 - Retain 36 ProcessAsync black-box regressions from the frozen original-implementation red run: 18 new Unit assertions and 13 new Integration assertions failed as intended, with original suites and five new controls passing. Candidate build/full-suite results and independent QA are recorded separately in provider-local frozen product receipts. Linux checks do not remove declared-OS gaps or complete P10/P21 production work.
+
+
+## P17B-R1 - 2026-09-15 - Local complete merge request signature
+
+- Add the Runner complete required-check batch producer and one process-bound PRE/POST currentness port. Freeze all inputs and results, bind complete BOUND receipt summaries and recheck every admitted work item before request signing and before return. Keep the real CLI at WAITING_EXTERNAL.
+- Correct Merge verification to cover the complete domain-prefixed request, preserve embedded attestations and array order, and require exact four-field scope agreement for every evidence item. Reject the known partial profile. Explicitly fix OpenSSL RSA-PSS SHA-256, MGF1-SHA-256 and salt length 32.
+- Add annotation-only owner Schema documentation and a shared 82-case owner corpus in the four existing test files. Preserve original methods and add real two-check synthetic Runner-to-OpenSSL-to-Merge positives plus signature, currentness and full-batch negative cases. The parent source actually approved all seven unresigned context mutations; the corrected source rejects the same counterexamples. Development Runner discovery passed 50 methods before this final documentation update; final coverage is recorded separately in the local checks publication.
+- Limit changes to the P17B-R1 16-path set. Manifest changes only describe suite environments and stop-on-failure rollback. Retain history and never restore the partial signer. TEST_ONLY authorization and local synthetic RSA do not establish deployed trust, formal verification, Owner acceptance or integration. Three PostgreSQL suites and three central Phase0/Candidate gates remain NOT_RUN; overall remains PARTIAL. Production issuer, bootstrap, CLI activation, deployment, Windows and device validation remain outside this slice.
+
+## P17B-R2 - 2026-09-15 - Host contract test entry initialization
+
+- Resolve and check the Host test helper directory before adding it to sys.path. Keep the original source directory first and the ordinary provider_verifier_fixture import unchanged. Preserve all nine contract test methods and assertions.
+- Continue the frozen P17B-R1 complete-request signature candidate. This revision changes only the Host contract test initialization and this final root changelog append; the signed-request implementation, schemas, corpus, helper and Manifest commands remain unchanged.
+- The R1 M08 module entry failed during helper import before any contract test body. Preserve that original failure. The required R2 validation set is the five original Host local commands M07-M11 plus D01 and D02, with fresh results bound to the final source bytes in the published checks. The other eighteen local entries retain separate R1 evidence and require explicit unchanged-input coverage; they are not new-candidate executions.
+- Independent QA still requires its own first full twenty-three local commands and two diagnostics after candidate freeze and separate START. Three PostgreSQL suites and three central gates remain NOT_RUN, and overall remains PARTIAL. Local checks do not authorize deployed trust, Owner acceptance, integration or release.

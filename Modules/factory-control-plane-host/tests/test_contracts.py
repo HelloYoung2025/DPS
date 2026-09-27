@@ -8,6 +8,10 @@ import unittest
 from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
+TEST_ROOT = (MODULE_ROOT / "tests").resolve(strict=True)
+if TEST_ROOT.parent != MODULE_ROOT:
+    raise RuntimeError("test helper root escaped its module")
+sys.path.insert(0, str(TEST_ROOT))
 SOURCE_ROOT = (MODULE_ROOT / "src").resolve(strict=True)
 if SOURCE_ROOT.parent != MODULE_ROOT:
     raise RuntimeError("test source root escaped its module")

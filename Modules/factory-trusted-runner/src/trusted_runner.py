@@ -8,14 +8,18 @@ process-bound collaborators. Untrusted input can only select a registered check.
 from __future__ import annotations
 
 import hashlib
+import copy
+import errno
 import json
 import os
 import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -67,11 +71,18 @@ _CHECK_KEYS = {
 _ATTESTATION_KEYS = {
     "algorithm", "key_id", "signer_identity", "payload_sha256", "signature_value",
 }
+_MERGE_METADATA_KEYS = {
+    "soul_id", "device_binding_id", "platform_account_id", "trace_id",
+    "idempotency_key", "privacy_class", "merge_request_id", "integration_commit",
+    "branch_heads", "changed_paths", "instruction_receipts",
+    "current_diff_fingerprint", "conflicts", "trusted_policy_sha256",
+}
+_MERGE_DOMAIN = b"dps-merge-request-attestation/v1\n"
 
 
 def canonical_bytes(value: Any) -> bytes:
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     ).encode("utf-8")
 
 
@@ -92,7 +103,7 @@ def _exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> Non
         )
 
 
-def _timestamp(value: Any, label: str) -> None:
+def _timestamp(value: Any, label: str) -> datetime:
     if not isinstance(value, str):
         raise TrustedRunnerError(f"{label} must be a timezone-aware timestamp")
     try:
@@ -101,9 +112,10 @@ def _timestamp(value: Any, label: str) -> None:
         raise TrustedRunnerError(f"{label} must be a timezone-aware timestamp") from exc
     if parsed.tzinfo is None:
         raise TrustedRunnerError(f"{label} must be a timezone-aware timestamp")
+    return parsed
 
 
-def _identity_envelope(value: Mapping[str, Any]) -> None:
+def _scope_envelope(value: Mapping[str, Any]) -> None:
     for name, pattern in _IDENTITIES.items():
         item = value.get(name)
         if item is not None and (not isinstance(item, str) or pattern.fullmatch(item) is None):
@@ -112,6 +124,10 @@ def _identity_envelope(value: Mapping[str, Any]) -> None:
         item = value.get(name)
         if not isinstance(item, str) or pattern.fullmatch(item) is None:
             raise TrustedRunnerError(f"invalid {name}")
+
+
+def _identity_envelope(value: Mapping[str, Any]) -> None:
+    _scope_envelope(value)
     for name, minimum, maximum in (("auth_context_id", 8, 128), ("request_id", 8, 128)):
         item = value.get(name)
         if not isinstance(item, str) or not minimum <= len(item) <= maximum:
@@ -152,21 +168,99 @@ def _existing(root: Path, relative: PurePosixPath, label: str, *, directory: boo
     return resolved
 
 
-def workspace_sha256(root: Path) -> str:
-    """Hash exact non-Git workspace bytes and reject every symlink."""
+def _file_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _read_protected_file(path: Path) -> tuple[bytes, tuple[int, ...]]:
+    """Read and hash one stable regular file through no-follow descriptors."""
+    directory = descriptor = None
+    try:
+        path = path.absolute()
+        directory = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent = Path(path.anchor)
+        parents = [(parent, _file_identity(os.fstat(directory))[:4])]
+        for part in path.parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+            parent = parent / part
+            parents.append((parent, _file_identity(os.fstat(directory))[:4]))
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise TrustedRunnerError("protected input must be a regular file")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            content = stream.read()
+            after = os.fstat(stream.fileno())
+        current = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        if _file_identity(before) != _file_identity(after) or _file_identity(after) != _file_identity(current):
+            raise TrustedRunnerError("protected input identity changed while reading")
+        if any(_file_identity(parent.lstat())[:4] != identity for parent, identity in parents):
+            raise TrustedRunnerError("protected input parent identity changed while reading")
+        return content, _file_identity(after)
+    except OSError as exc:
+        raise TrustedRunnerError("protected input cannot be read safely: " + str(path)) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if directory is not None:
+            os.close(directory)
+
+
+def _workspace_snapshot(root: Path) -> tuple[str, dict[str, tuple[int, ...]]]:
     records: list[dict[str, str]] = []
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        relative = path.relative_to(root)
-        if relative.parts and relative.parts[0] == ".git":
-            continue
-        if path.is_symlink():
-            raise TrustedRunnerError(f"symlinked workspace path: {relative.as_posix()}")
-        if path.is_file():
-            records.append({
-                "path": relative.as_posix(),
-                "sha256": sha256_bytes(path.read_bytes()),
-            })
-    return sha256_bytes(canonical_bytes(records))
+    identities: dict[str, tuple[int, ...]] = {}
+
+    def visit(relative: PurePosixPath, parent: int | None, expected: os.stat_result) -> None:
+        if not stat.S_ISDIR(expected.st_mode):
+            raise TrustedRunnerError("workspace directory identity is unsafe")
+        name = root if parent is None else relative.name
+        directory = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        try:
+            before = os.fstat(directory)
+            if _file_identity(before) != _file_identity(expected):
+                raise TrustedRunnerError("workspace directory changed before enumeration")
+            identities[relative.as_posix()] = _file_identity(before)[:4]
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+            for entry in entries:
+                if relative == PurePosixPath(".") and entry.name == ".git":
+                    continue
+                child = relative / entry.name
+                info = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise TrustedRunnerError(f"symlinked workspace path: {child.as_posix()}")
+                if stat.S_ISDIR(info.st_mode):
+                    visit(child, directory, info)
+                elif stat.S_ISREG(info.st_mode):
+                    content, identity = _read_protected_file(root / child)
+                    if identity != _file_identity(info):
+                        raise TrustedRunnerError("workspace file changed during enumeration")
+                    records.append({"path": child.as_posix(), "sha256": sha256_bytes(content)})
+                    identities[child.as_posix()] = identity
+                else:
+                    raise TrustedRunnerError("non-regular workspace input")
+            after = os.fstat(directory)
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if _file_identity(before) != _file_identity(after) or _file_identity(after) != _file_identity(current):
+                raise TrustedRunnerError("workspace directory changed during enumeration")
+        finally:
+            os.close(directory)
+
+    try:
+        visit(PurePosixPath("."), None, root.lstat())
+    except OSError as exc:
+        raise TrustedRunnerError("workspace cannot be enumerated safely") from exc
+    records.sort(key=lambda item: item["path"])
+    return sha256_bytes(canonical_bytes(records)), identities
+
+
+def workspace_sha256(root: Path) -> str:
+    """Hash the original complete non-Git file set, including untracked files."""
+    return _workspace_snapshot(root)[0]
 
 
 @dataclass(frozen=True)
@@ -326,6 +420,7 @@ class TrustedRunner:
         commit_workspace_verifier: Callable[[Path, str, str], Mapping[str, Any]],
         fence_verifier: Callable[[str, Mapping[str, int]], Mapping[str, Any]],
         attestation_issuer: Callable[[bytes, str, str], Mapping[str, Any]],
+        merge_request_verifier: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
     ) -> None:
         self.repository_root = self._root(repository_root, "repository root")
         self.execution_root = self._root(execution_root, "execution root")
@@ -337,6 +432,8 @@ class TrustedRunner:
         self.commit_workspace_verifier = commit_workspace_verifier
         self.fence_verifier = fence_verifier
         self.attestation_issuer = attestation_issuer
+        self.merge_request_verifier = merge_request_verifier
+        self._merge_request_lock = threading.Lock()
 
     @staticmethod
     def _root(value: str | os.PathLike[str], label: str) -> Path:
@@ -344,6 +441,206 @@ class TrustedRunner:
         if path.is_symlink() or not path.exists() or not path.is_dir():
             raise TrustedRunnerError(f"invalid {label}")
         return path.resolve(strict=True)
+
+    def issue_merge_request(
+        self, metadata: Mapping[str, Any], run_inputs: Sequence[Mapping[str, Any]],
+        policy: TrustedRunnerPolicy,
+    ) -> dict[str, Any]:
+        """Issue only a complete, current batch; the provider is composition-owned."""
+        if not self._merge_request_lock.acquire(blocking=False):
+            raise TrustedRunnerError("merge request issuance is already active")
+        try:
+            verifier = self.merge_request_verifier
+            if verifier is None:
+                raise TrustedRunnerError("WAITING_EXTERNAL: merge request currentness verifier required")
+            if not callable(verifier):
+                raise TrustedRunnerError("invalid merge request verifier")
+            if not isinstance(metadata, Mapping) or not isinstance(run_inputs, list):
+                raise TrustedRunnerError("merge metadata must be an object and run_inputs a list")
+            if not isinstance(policy, TrustedRunnerPolicy):
+                raise TrustedRunnerError("verified Runner policy required")
+            originals, original_policy = (metadata, run_inputs), policy
+            original_bytes = canonical_bytes(originals)
+            metadata, work = json.loads(original_bytes)
+            policy = copy.deepcopy(policy)
+            _exact_keys(metadata, _MERGE_METADATA_KEYS, "merge metadata")
+            _scope_envelope(metadata)
+            self._validate_merge_metadata(metadata)
+            if policy.runner_identity != self.runner_identity:
+                raise TrustedRunnerError("process runner identity does not match trusted policy")
+            required = sorted(check.check_id for check in policy.checks.values() if check.required)
+            check_ids = []
+            for item in work:
+                if not isinstance(item, Mapping):
+                    raise TrustedRunnerError("run work item must be an object")
+                _exact_keys(item, {"request", "worktree_plan", "instruction_receipt", "lease"}, "run work item")
+                if any(not isinstance(value, Mapping) for value in item.values()):
+                    raise TrustedRunnerError("run work item values must be objects")
+                request = item["request"]
+                _exact_keys(request, _REQUEST_KEYS, "run request")
+                _identity_envelope(request)
+                check_id = request["check_id"]
+                if not isinstance(check_id, str) or check_id not in policy.checks:
+                    raise TrustedRunnerError("unknown trusted check")
+                if request["module_id"] != policy.checks[check_id].module_id:
+                    raise TrustedRunnerError("run module does not match trusted check")
+                if any(request[name] != metadata[name] for name in (*_IDENTITIES, "trace_id")):
+                    raise TrustedRunnerError("run identity scope differs from merge request")
+                check_ids.append(check_id)
+            if not required or sorted(check_ids) != required:
+                raise TrustedRunnerError("batch must contain every required check exactly once")
+
+            summaries = {}
+            for item in work:
+                receipt = item["instruction_receipt"]
+                receipt_id = item["request"]["instruction_receipt_id"]
+                summary = {"receipt_id": receipt_id, "status": receipt.get("status"),
+                           "diff_fingerprint": receipt.get("diff_fingerprint"),
+                           "receipt_sha256": sha256_bytes(canonical_bytes(receipt))}
+                if receipt_id in summaries and summaries[receipt_id] != summary:
+                    raise TrustedRunnerError("same receipt ID binds different complete receipts")
+                summaries[receipt_id] = summary
+            proposed = metadata["instruction_receipts"]
+            if (len(proposed) != len(summaries)
+                    or len({item["receipt_id"] for item in proposed}) != len(proposed)
+                    or any(summaries.get(item["receipt_id"]) != item for item in proposed)):
+                raise TrustedRunnerError("merge receipt summaries differ from complete run receipts")
+
+            last_time = _utc_now()
+            initial = [self._merge_run_facts(item, policy, last_time) for item in work]
+            results = []
+
+            def check_batch() -> str:
+                nonlocal last_time
+                if (canonical_bytes(originals) != original_bytes or original_policy != policy
+                        or canonical_bytes((metadata, work)) != original_bytes):
+                    raise TrustedRunnerError("merge batch inputs or policy changed")
+                now = _utc_now()
+                if _timestamp(now, "batch time") < _timestamp(last_time, "previous batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards in merge batch")
+                for item, admitted in zip(work, initial):
+                    if self._merge_run_facts(item, policy, now) != admitted:
+                        raise TrustedRunnerError("merge batch admitted facts changed")
+                end = _utc_now()
+                if _timestamp(end, "batch end") < _timestamp(now, "batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards during batch check")
+                for item in work:
+                    self._lease_time(item["lease"], end)
+                if (canonical_bytes(originals) != original_bytes or original_policy != policy
+                        or canonical_bytes((metadata, work)) != original_bytes):
+                    raise TrustedRunnerError("merge batch changed during currentness check")
+                last_time = end
+                return end
+
+            check_batch()
+            for item, admitted in zip(work, initial):
+                result = json.loads(canonical_bytes(self.run(**copy.deepcopy(item), policy=copy.deepcopy(policy))))
+                if (result.get("status") != "PASS" or result.get("required") is not True
+                        or result.get("release_allowed") is not True):
+                    raise TrustedRunnerError("required batch check is not release-allowed PASS")
+                if (any(result.get(name) != metadata[name] for name in (*_IDENTITIES, "trace_id"))
+                        or result.get("check_id") != item["request"]["check_id"]
+                        or result.get("tested_commit") != metadata["integration_commit"]
+                        or result.get("tested_commit") != admitted["commit_workspace"][0]
+                        or result.get("trusted_policy_sha256") != policy.digest
+                        or result.get("required_checks_sha256") != sha256_bytes(canonical_bytes(required))):
+                    raise TrustedRunnerError("batch result differs from admitted merge facts")
+                finished = result["finished_at"]
+                if _timestamp(finished, "result finished_at") < _timestamp(last_time, "previous batch time"):
+                    raise TrustedRunnerError("trusted clock moved backwards between checks")
+                last_time = finished
+                results.append({"basis": "merge-head", "result": result})
+            occurred_at = check_batch()
+            unsigned = {**metadata, "schema_version": "1.0.0", "contract_id": "merge.request/v1",
+                        "producer_module": "factory-trusted-runner", "occurred_at": occurred_at,
+                        "evidence": results}
+            unsigned_bytes = canonical_bytes(unsigned)
+
+            def verify_current_request() -> None:
+                request_copy = json.loads(unsigned_bytes)
+                fact = verifier(request_copy, self.runner_identity)
+                if canonical_bytes(request_copy) != unsigned_bytes:
+                    raise TrustedRunnerError("merge verifier modified its request copy")
+                _verified_fact(fact, "merge request", metadata["merge_request_id"],
+                               sha256_bytes(unsigned_bytes))
+
+            verify_current_request()
+            check_batch()
+            payload = _MERGE_DOMAIN + unsigned_bytes
+            attestation = self._attestation(
+                self.attestation_issuer(payload, self.runner_identity, policy.digest), sha256_bytes(payload)
+            )
+            verify_current_request()
+            check_batch()
+            signed = json.loads(unsigned_bytes)
+            signed["runner_attestation"] = json.loads(canonical_bytes(attestation))
+            return signed
+        except TrustedRunnerError:
+            raise
+        except Exception as exc:
+            raise TrustedRunnerError("merge request issuance failed closed") from exc
+        finally:
+            self._merge_request_lock.release()
+
+    @staticmethod
+    def _validate_merge_metadata(value: Mapping[str, Any]) -> None:
+        for name, pattern in (("merge_request_id", r"[a-z0-9][a-z0-9._:-]{7,127}"),
+                              ("integration_commit", r"[0-9a-f]{40}"),
+                              ("trusted_policy_sha256", r"[0-9a-f]{64}"),
+                              ("current_diff_fingerprint", r"[0-9a-f]{64}")):
+            if not isinstance(value[name], str) or re.fullmatch(pattern, value[name]) is None:
+                raise TrustedRunnerError(f"invalid merge metadata {name}")
+        if value["privacy_class"] != "internal":
+            raise TrustedRunnerError("merge privacy_class must be internal")
+        branches = value["branch_heads"]
+        if not isinstance(branches, list) or not branches:
+            raise TrustedRunnerError("merge branch_heads must be a nonempty list")
+        for branch in branches:
+            if (not isinstance(branch, Mapping) or set(branch) != {"module_id", "commit"}
+                    or not isinstance(branch["module_id"], str) or not _MODULE_ID.fullmatch(branch["module_id"])
+                    or not isinstance(branch["commit"], str) or not _COMMIT.fullmatch(branch["commit"])):
+                raise TrustedRunnerError("invalid merge branch head")
+        paths = value["changed_paths"]
+        if (not isinstance(paths, list) or any(not isinstance(p, str) or not p for p in paths)
+                or len(set(paths)) != len(paths)):
+            raise TrustedRunnerError("invalid merge changed_paths")
+        conflicts = value["conflicts"]
+        if not isinstance(conflicts, Mapping) or set(conflicts) != {"merge", "path_ownership", "contract_ownership"}:
+            raise TrustedRunnerError("invalid merge conflicts")
+        if any(not isinstance(v, list) or any(not isinstance(s, str) or not s for s in v) for v in conflicts.values()):
+            raise TrustedRunnerError("invalid merge conflict values")
+        receipts = value["instruction_receipts"]
+        if not isinstance(receipts, list) or not receipts:
+            raise TrustedRunnerError("merge receipts must be a nonempty list")
+        for receipt in receipts:
+            if (not isinstance(receipt, Mapping)
+                    or set(receipt) != {"receipt_id", "status", "diff_fingerprint", "receipt_sha256"}
+                    or not isinstance(receipt["receipt_id"], str)
+                    or re.fullmatch(r"[a-z0-9][a-z0-9._:-]{7,127}", receipt["receipt_id"]) is None
+                    or receipt["status"] != "BOUND"
+                    or receipt["diff_fingerprint"] != value["current_diff_fingerprint"]
+                    or not isinstance(receipt["receipt_sha256"], str) or not _HASH.fullmatch(receipt["receipt_sha256"])):
+                raise TrustedRunnerError("invalid or stale merge receipt summary")
+
+    def _merge_run_facts(self, item: Mapping[str, Any], policy: TrustedRunnerPolicy, now: str) -> dict[str, Any]:
+        request, plan, receipt, lease = (item[k] for k in ("request", "worktree_plan", "instruction_receipt", "lease"))
+        auth = self.auth_context_verifier(request["auth_context_id"], self.runner_identity)
+        _verified_fact(auth, "auth context", request["auth_context_id"])
+        receipt_hash = sha256_bytes(canonical_bytes(receipt))
+        _verified_fact(self.receipt_verifier(copy.deepcopy(receipt)), "instruction receipt",
+                       request["instruction_receipt_id"], receipt_hash)
+        self._validate_receipt(request, request["module_id"], receipt)
+        entry = self._validate_plan(request, request["module_id"], plan, policy)
+        commit_workspace = self._verified_commit_workspace(plan)
+        lease_fact = self._verified_lease(plan, lease, entry)
+        manifest = self._verified_manifest_suite(request["module_id"], policy.checks[request["check_id"]], receipt)
+        protected = _workspace_snapshot(self.execution_root)
+        if protected[0] != commit_workspace[1]:
+            raise TrustedRunnerError("workspace changed during merge batch check")
+        self._lease_time(lease, now)
+        return {"auth_hash": auth["fact_sha256"], "receipt_hash": receipt_hash,
+                "entry": copy.deepcopy(entry), "commit_workspace": commit_workspace,
+                "lease": lease_fact, "manifest": manifest, "protected": protected}
 
     def run(
         self,
@@ -353,6 +650,14 @@ class TrustedRunner:
         lease: Mapping[str, Any],
         policy: TrustedRunnerPolicy,
     ) -> dict[str, Any]:
+        originals = (request, worktree_plan, instruction_receipt, lease)
+        try:
+            original_bytes = canonical_bytes(originals)
+            request, worktree_plan, instruction_receipt, lease = json.loads(original_bytes)
+            original_policy = policy
+            policy = copy.deepcopy(policy)
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise TrustedRunnerError("run inputs cannot be frozen as JSON") from exc
         if not isinstance(request, Mapping):
             raise TrustedRunnerError("request must be an object")
         _exact_keys(request, _REQUEST_KEYS, "run request")
@@ -368,7 +673,8 @@ class TrustedRunner:
 
         auth_fact = self.auth_context_verifier(request["auth_context_id"], self.runner_identity)
         _verified_fact(auth_fact, "auth context", request["auth_context_id"])
-        receipt_fact = self.receipt_verifier(instruction_receipt)
+        auth_hash = auth_fact["fact_sha256"]
+        receipt_fact = self.receipt_verifier(copy.deepcopy(instruction_receipt))
         _verified_fact(
             receipt_fact, "instruction receipt", request["instruction_receipt_id"],
             sha256_bytes(canonical_bytes(instruction_receipt)),
@@ -380,17 +686,43 @@ class TrustedRunner:
         manifest_hash, suite_id, evidence_level = self._verified_manifest_suite(
             module_id, check, instruction_receipt
         )
+        protected_start = _workspace_snapshot(self.execution_root)
+        if protected_start[0] != workspace_hash:
+            raise TrustedRunnerError("workspace changed during admission")
 
         cwd = self.execution_root if check.cwd == PurePosixPath(".") else _existing(
             self.execution_root, check.cwd, "check cwd", directory=True
         )
         argv = (self._resolve_executable(check.argv[0], policy), *check.argv[1:])
         started_at = _utc_now()
+        self._lease_time(lease, started_at)
         exit_code, stdout, stderr, timed_out, limited = self._execute(
             argv, cwd, self._environment(policy), check.timeout_seconds,
             policy.maximum_output_bytes,
         )
         finished_at = _utc_now()
+        if _timestamp(finished_at, "finished_at") < _timestamp(started_at, "started_at"):
+            raise TrustedRunnerError("trusted clock moved backwards")
+        if canonical_bytes(originals) != original_bytes or original_policy != policy:
+            raise TrustedRunnerError("run inputs changed during execution")
+        auth_fact = self.auth_context_verifier(request["auth_context_id"], self.runner_identity)
+        _verified_fact(auth_fact, "auth context", request["auth_context_id"], auth_hash)
+        receipt_fact = self.receipt_verifier(copy.deepcopy(instruction_receipt))
+        _verified_fact(receipt_fact, "instruction receipt", request["instruction_receipt_id"],
+                       sha256_bytes(canonical_bytes(instruction_receipt)))
+        self._validate_receipt(request, module_id, instruction_receipt)
+        post_entry = self._validate_plan(request, module_id, worktree_plan, policy)
+        if self._verified_lease(worktree_plan, lease, post_entry) != (lease_id, fencing_token):
+            raise TrustedRunnerError("lease changed after execution")
+        if self._verified_manifest_suite(module_id, check, instruction_receipt) != (manifest_hash, suite_id, evidence_level):
+            raise TrustedRunnerError("Manifest changed after execution")
+        if self._verified_commit_workspace(worktree_plan) != (tested_commit, workspace_hash):
+            raise TrustedRunnerError("commit or workspace changed after execution")
+        if _workspace_snapshot(self.execution_root) != protected_start:
+            raise TrustedRunnerError("protected workspace identity changed after execution")
+        if canonical_bytes(originals) != original_bytes or original_policy != policy:
+            raise TrustedRunnerError("run inputs changed during postcheck")
+        self._lease_time(lease, finished_at)
         status = self._status(exit_code, stdout + stderr, check, timed_out, limited)
         stdout_hash, stderr_hash = sha256_bytes(stdout), sha256_bytes(stderr)
         log_hash = sha256_bytes(canonical_bytes({
@@ -428,6 +760,10 @@ class TrustedRunner:
         }
         result["raw_artifact_sha256"] = sha256_bytes(canonical_bytes(result))
         payload = canonical_bytes(result)
+        signing_time = _utc_now()
+        if _timestamp(signing_time, "signing time") < _timestamp(finished_at, "finished_at"):
+            raise TrustedRunnerError("trusted clock moved backwards before issuance")
+        self._lease_time(lease, signing_time)
         result["runner_attestation"] = self._attestation(
             self.attestation_issuer(payload, self.runner_identity, policy.digest),
             sha256_bytes(payload),
@@ -513,7 +849,7 @@ class TrustedRunner:
             or any(not isinstance(key, str) or not isinstance(value, int) or value < 1 for key, value in tokens.items())
         ):
             raise TrustedRunnerError("invalid active worktree lease")
-        fact = self.fence_verifier(lease_id, tokens)
+        fact = self.fence_verifier(lease_id, copy.deepcopy(tokens))
         _verified_fact(fact, "worktree lease", lease_id, sha256_bytes(canonical_bytes(lease)))
         fence = fact.get("fencing_token")
         if (
@@ -523,12 +859,21 @@ class TrustedRunner:
             raise TrustedRunnerError("stale fencing token")
         return lease_id, fence
 
+    @staticmethod
+    def _lease_time(lease: Mapping[str, Any], now: str) -> None:
+        acquired = _timestamp(lease.get("acquired_at"), "lease acquired_at")
+        expires = _timestamp(lease.get("expires_at"), "lease expires_at")
+        current = _timestamp(now, "trusted time")
+        if not acquired <= current < expires:
+            raise TrustedRunnerError("worktree lease is not current")
+
     def _verified_manifest_suite(
         self, module_id: str, check: TrustedCheck, receipt: Mapping[str, Any]
     ) -> tuple[str, str, str]:
         relative = PurePosixPath("Modules") / module_id / "module.yaml"
         path = _existing(self.execution_root, relative, "module manifest", directory=False)
-        content, digest = path.read_bytes(), sha256_bytes(path.read_bytes())
+        content, _identity = _read_protected_file(path)
+        digest = sha256_bytes(content)
         bound = [item for item in receipt.get("manifests", []) if isinstance(item, dict) and item.get("path") == relative.as_posix()]
         if len(bound) != 1 or bound[0].get("sha256") != digest:
             raise TrustedRunnerError("module manifest is not bound by the fresh receipt")
@@ -571,15 +916,52 @@ class TrustedRunner:
 
     @staticmethod
     def _terminate(process: subprocess.Popen[bytes]) -> None:
-        if process.poll() is not None:
-            return
+        deadline = time.monotonic() + 5
+        gone = False
+        failure = None
         try:
-            if os.name == "posix":
+            # A completed leader needs no destructive signal. After reaping it,
+            # only observe the group; bounded descendants may finish naturally.
+            process.wait(timeout=0.05)
+        except subprocess.TimeoutExpired:
+            # wait timed out without reaping: this child still reserves its PID.
+            # Never send a destructive signal after that reservation is released.
+            try:
+                if time.monotonic() >= deadline:
+                    raise TrustedRunnerError("leader cleanup deadline expired")
                 os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-        except (OSError, ProcessLookupError):
-            process.kill()
+            except ProcessLookupError:
+                gone = True
+            except OSError as exc:
+                failure = exc
+            finally:
+                try:
+                    process.wait(timeout=max(0.0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired as exc:
+                    raise TrustedRunnerError("leader did not finish bounded cleanup") from exc
+        if failure is not None:
+            raise TrustedRunnerError("registered process group termination failed") from failure
+        unknown = None
+        if time.monotonic() >= deadline:
+            raise TrustedRunnerError("process group cleanup deadline expired")
+        while not gone:
+            if time.monotonic() >= deadline:
+                raise TrustedRunnerError("process group did not finish cleanup") from unknown
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                gone = True
+            except OSError as exc:
+                if exc.errno != errno.EPERM:
+                    raise TrustedRunnerError("process group currentness is unknown") from exc
+                # This observation is UNKNOWN, never absence. Only a real ESRCH
+                # within this same deadline can resolve the group currentness.
+                unknown = exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TrustedRunnerError("process group cleanup deadline expired") from unknown
+            if not gone:
+                time.sleep(min(0.01, remaining))
 
     @classmethod
     def _execute(
@@ -587,28 +969,29 @@ class TrustedRunner:
         timeout_seconds: int, maximum_output_bytes: int,
     ) -> tuple[int | None, bytes, bytes, bool, bool]:
         timed_out = limited = False
+        if os.name != "posix":
+            raise TrustedRunnerError("POSIX process group cleanup is unavailable")
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-            process = subprocess.Popen(
-                list(argv), cwd=cwd, env=dict(environment), stdin=subprocess.DEVNULL,
-                stdout=out, stderr=err, shell=False, close_fds=True,
-                start_new_session=(os.name == "posix"),
-            )
-            deadline = time.monotonic() + timeout_seconds
-            while process.poll() is None:
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    cls._terminate(process)
-                    break
-                if os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size > maximum_output_bytes:
-                    limited = True
-                    cls._terminate(process)
-                    break
-                time.sleep(0.01)
+            process = None
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                cls._terminate(process)
-                process.wait(timeout=5)
+                process = subprocess.Popen(
+                    list(argv), cwd=cwd, env=dict(environment), stdin=subprocess.DEVNULL,
+                    stdout=out, stderr=err, shell=False, close_fds=True,
+                    start_new_session=True,
+                )
+                deadline = time.monotonic() + timeout_seconds
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        timed_out = True
+                        break
+                    if os.fstat(out.fileno()).st_size + os.fstat(err.fileno()).st_size > maximum_output_bytes:
+                        limited = True
+                        break
+                    time.sleep(0.01)
+            finally:
+                if process is not None:
+                    cls._terminate(process)
+            timed_out = timed_out or time.monotonic() >= deadline
             out.seek(0); err.seek(0)
             stdout = out.read(maximum_output_bytes + 1)
             stderr = err.read(max(0, maximum_output_bytes + 1 - len(stdout)))

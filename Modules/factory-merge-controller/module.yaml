@@ -164,7 +164,7 @@
         "type": "unit",
         "required": true,
         "command": "PYTHONPATH=Modules/factory-merge-controller/src python3.12 -m unittest discover -s Modules/factory-merge-controller/tests -p 'test_merge_controller.py'",
-        "environment": "Python 3.12 stdlib",
+        "environment": "Python 3.12 with hash-locked jsonschema/referencing; shared owner corpus and synthetic RSA-PSS SHA256 MGF1-SHA256 salt32 verification; TEST_ONLY keys",
         "evidenceLevel": "REPOSITORY_STATIC_VERIFIED"
       },
       {
@@ -172,7 +172,7 @@
         "type": "contract",
         "required": true,
         "command": "PYTHONPATH=Modules/factory-merge-controller/src python3.12 -m unittest discover -s Modules/factory-merge-controller/tests -p 'test_contracts.py'",
-        "environment": "Python 3.12, jsonschema and referencing from root requirements-ci.txt hash lock; positive and adversarial contract instances",
+        "environment": "Python 3.12, jsonschema and referencing from root requirements-ci.txt hash lock; shared owner corpus, explicit date-time checks and actual Mapping boundaries with TEST_ONLY signatures",
         "evidenceLevel": "CONTRACT_VERIFIED"
       }
     ]
@@ -190,7 +190,7 @@
   "rollout": {
     "featureFlag": "factory_merge_controller_v1",
     "canary": "shadow compare decisions against independent human review; no production mutation",
-    "rollback": "route requests to previous signed module artifact and retain decisions",
+    "rollback": "stop candidate evidence consumption and merge; retain decisions and history; never restore the known partial request signer",
     "killSwitch": "kill_factory_merge_controller"
   },
   "deviceGates": {
