@@ -352,6 +352,7 @@ public sealed class PolicyApprovalExecutionFenceClient : IDisposable
 
         if (snapshot.Approval.Decision != ApprovalDecisionV1.Approved
             || snapshot.Approval.ShadowOnly
+            || snapshot.ProposalContractMajor != 2
             || snapshot.Status != PolicyApprovalAuthoritativeSnapshot.Active
             || snapshot.StatusRevision != request.ExpectedStatusRevision
             || snapshot.RuntimeRevision != request.ExpectedRuntimeRevision

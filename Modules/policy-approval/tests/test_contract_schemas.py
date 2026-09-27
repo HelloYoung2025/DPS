@@ -28,6 +28,11 @@ CONTRACTS = (
         PROVIDED / "approval.execution.fence.v1.corpus.json",
     ),
     (
+        "approval.evaluation.request/v1",
+        PROVIDED / "approval.evaluation.request.v1.schema.json",
+        PROVIDED / "approval.evaluation.request.v1.corpus.json",
+    ),
+    (
         "approval.submission.intent/v1",
         PROVIDED / "approval.submission.intent.v1.schema.json",
         PROVIDED / "approval.submission.intent.v1.corpus.json",
@@ -149,6 +154,40 @@ EXPECTED_CASE_IDS = {
             "release-long",
         }
     ),
+    "approval.evaluation.request/v1": frozenset(
+        {
+            "valid",
+            "valid-execute",
+            "valid-canonical-fraction",
+            "additional-field",
+            "legacy-envelope-requested-mode",
+            "missing-field",
+            "missing-promotion-field",
+            "unknown-mode",
+            "lowercase-mode",
+            "shadow-with-promotion",
+            "execute-without-promotion",
+            "empty-promotion-digest",
+            "promotion-digest-uppercase",
+            "uppercase-uuid",
+            "zero-uuid",
+            "offset-not-zulu",
+            "invalid-calendar-date",
+            "year-zero",
+            "fractional-trailing-zero",
+            "trailing-newline-id",
+            "trailing-newline-proposal-sha",
+            "digest-uppercase",
+            "digest-short",
+            "unknown-contract",
+            "wrong-producer",
+            "wrong-auth-scope",
+            "signature-null",
+            "noncanonical-base64-pad-bits",
+            "lifetime-over-120-seconds",
+            "lifetime-under-120-seconds",
+        }
+    ),
     "approval.submission.intent/v1": frozenset(
         {"valid", "unknown-field", "missing-attempt-id", "attempt-zero", "bom-generation-zero", "uppercase-request-hash"}
     ),
@@ -246,8 +285,11 @@ class PolicyApprovalProvidedSchemaTests(unittest.TestCase):
     def test_fence_shared_corpus(self) -> None:
         self._assert_corpus(CONTRACTS[2])
 
+    def test_evaluation_request_shared_corpus(self) -> None:
+        self._assert_corpus(CONTRACTS[3])
+
     def test_submission_lifecycle_shared_corpora(self) -> None:
-        for contract in CONTRACTS[3:]:
+        for contract in CONTRACTS[4:]:
             self._assert_corpus(contract)
 
     def _assert_corpus(self, contract: tuple[str, Path, Path]) -> None:

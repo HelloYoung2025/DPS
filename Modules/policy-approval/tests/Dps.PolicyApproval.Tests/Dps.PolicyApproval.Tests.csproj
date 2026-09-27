@@ -8,5 +8,8 @@
     <Content Include="../../migrations/004_create_native_stop_challenge_ledger.sql"
              Link="proposed-migrations/004_create_native_stop_challenge_ledger.sql"
              CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../planner/tests/action-proposal-contract-cases.v2.json"
+             Link="planner-contracts/action-proposal-contract-cases.v2.json"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

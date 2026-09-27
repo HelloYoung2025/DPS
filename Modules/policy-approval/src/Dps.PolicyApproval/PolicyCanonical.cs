@@ -26,7 +26,7 @@ internal static class PolicyCanonicalization
             ["fixture.type"] = new HashSet<string>(["selector_ref", "value_ref"], StringComparer.Ordinal)
         };
 
-    internal static ActionProposalV1 SnapshotProposal(ActionProposalV1 proposal)
+    internal static ActionProposalV2 SnapshotProposal(ActionProposalV2 proposal)
     {
         ArgumentNullException.ThrowIfNull(proposal);
         // The Planner contract performs validation and collection capture in one

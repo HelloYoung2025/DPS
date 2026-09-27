@@ -518,7 +518,8 @@ public sealed class PostgresPolicyApprovalMigrator
     [
         "001_create_policy_approval.sql",
         "002_configure_policy_runtime_role.sql",
-        "003_create_submission_lifecycle.sql"
+        "003_create_submission_lifecycle.sql",
+        "005_add_proposal_contract_major.sql"
     ];
     private readonly PolicyApprovalMigrationOptions _options;
 

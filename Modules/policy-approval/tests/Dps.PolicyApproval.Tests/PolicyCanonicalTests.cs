@@ -17,6 +17,24 @@ public sealed class PolicyCanonicalTests
     private const string Account = "pa_cccccccccccccccccccccccccccccccc";
     private const string Trace = "trace_cccccccccccccccccccccccccccccccc";
     private const string Idempotency = "idem_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    private static readonly string SelectorRef = "selector_" + new string('a', 64);
+    private static readonly string ValueRef = "value_" + new string('b', 64);
+    private static readonly string EvidenceRef = "evidence_" + new string('e', 64);
+    private static readonly IReadOnlySet<string> EvaluationRequestCorpusCaseIds =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "valid", "valid-execute", "valid-canonical-fraction", "additional-field",
+            "legacy-envelope-requested-mode", "missing-field", "missing-promotion-field",
+            "unknown-mode", "lowercase-mode", "shadow-with-promotion",
+            "execute-without-promotion", "empty-promotion-digest",
+            "promotion-digest-uppercase", "uppercase-uuid", "zero-uuid",
+            "offset-not-zulu", "invalid-calendar-date", "year-zero",
+            "fractional-trailing-zero", "trailing-newline-id",
+            "trailing-newline-proposal-sha", "digest-uppercase", "digest-short",
+            "unknown-contract", "wrong-producer", "wrong-auth-scope", "signature-null",
+            "noncanonical-base64-pad-bits", "lifetime-over-120-seconds",
+            "lifetime-under-120-seconds"
+        };
     private static readonly IReadOnlySet<string> PromotionCorpusCaseIds =
         new HashSet<string>(StringComparer.Ordinal)
         {
@@ -64,25 +82,37 @@ public sealed class PolicyCanonicalTests
         };
 
     [Fact, Trait("Category", "Contract")]
-    public void ProposalCanonicalCommitmentSeparatesOldDelimiterCollision()
+    public void ProposalCommitmentIsOwnerV2DigestAndTypedReferencesRejectDelimiters()
     {
         var first = Proposal(new Dictionary<string, string>
         {
-            ["selector_ref"] = "x,value_ref=y",
-            ["value_ref"] = "z"
+            ["selector_ref"] = SelectorRef,
+            ["value_ref"] = ValueRef
         });
         var second = first with
         {
             Parameters = new Dictionary<string, string>
             {
-                ["selector_ref"] = "x",
-                ["value_ref"] = "y,value_ref=z"
+                ["selector_ref"] = "selector_" + new string('c', 64),
+                ["value_ref"] = "value_" + new string('a', 64)
             }
         };
 
+        Assert.Equal("dps.planner.action-proposal-sha256/v2", ActionProposalV2Canonical.Domain);
         Assert.NotEqual(
-            PolicyAuthorizationBinding.ComputeProposalSha256(first),
-            PolicyAuthorizationBinding.ComputeProposalSha256(second));
+            ActionProposalV2Canonical.ComputeSha256(first),
+            ActionProposalV2Canonical.ComputeSha256(second));
+        Assert.Equal(
+            ActionProposalV2Canonical.ComputeSha256(first),
+            ActionProposalV2Canonical.ComputeSha256(PolicyCanonicalization.SnapshotProposal(first)));
+        Assert.Throws<ArgumentException>(() => PolicyCanonicalization.SnapshotProposal(first with
+        {
+            Parameters = new Dictionary<string, string>
+            {
+                ["selector_ref"] = "x,value_ref=y",
+                ["value_ref"] = "z"
+            }
+        }));
     }
 
     [Fact, Trait("Category", "Contract")]
@@ -90,10 +120,10 @@ public sealed class PolicyCanonicalTests
     {
         var invalid = Proposal(new Dictionary<string, string>
         {
-            ["selector_ref"] = "fixture.input",
+            ["selector_ref"] = SelectorRef,
             ["value_ref"] = "\ud800"
         });
-        Assert.Throws<EncoderFallbackException>(() => PolicyAuthorizationBinding.ComputeProposalSha256(invalid));
+        Assert.Throws<EncoderFallbackException>(() => PolicyCanonicalization.SnapshotProposal(invalid));
         Assert.DoesNotContain(
             typeof(PolicyApprovalAuthoritativeSnapshot).GetConstructors(BindingFlags.Public | BindingFlags.Instance),
             constructor => constructor.GetParameters().Length > 0);
@@ -104,24 +134,25 @@ public sealed class PolicyCanonicalTests
     {
         var stableParameters = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["selector_ref"] = "fixture.input",
-            ["value_ref"] = "fixture.value"
+            ["selector_ref"] = SelectorRef,
+            ["value_ref"] = ValueRef
         };
         var flippingParameters = new FlippingReadOnlyDictionary(
             stableParameters,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["selector_ref"] = "fixture.input",
+                ["selector_ref"] = SelectorRef,
                 ["unexpected"] = "second-enumeration-attack"
             });
         var flippingEvidence = new FlippingReadOnlyList(
-            ["evidence:canonical"],
+            [EvidenceRef],
             ["not-an-evidence-reference"]);
         var proposal = Proposal(flippingParameters) with { EvidenceRefs = flippingEvidence };
 
+        var snapshot = PolicyCanonicalization.SnapshotProposal(proposal);
         Assert.Equal(
-            PolicyAuthorizationBinding.ComputeProposalSha256(Proposal(stableParameters)),
-            PolicyAuthorizationBinding.ComputeProposalSha256(proposal));
+            ActionProposalV2Canonical.ComputeSha256(Proposal(stableParameters)),
+            ActionProposalV2Canonical.ComputeSha256(snapshot));
         Assert.Equal(1, flippingParameters.EnumerationCount);
         Assert.Equal(1, flippingEvidence.EnumerationCount);
     }
@@ -139,7 +170,8 @@ public sealed class PolicyCanonicalTests
         {
             "Dps.PolicyApproval.Contracts.approval.decision.v1.schema.json",
             "Dps.PolicyApproval.Contracts.approval.execution.fence.v1.schema.json",
-            "Dps.PolicyApproval.Contracts.action.execution.promotion.v1.schema.json"
+            "Dps.PolicyApproval.Contracts.action.execution.promotion.v1.schema.json",
+            "Dps.PolicyApproval.Contracts.approval.evaluation.request.v1.schema.json"
         })
         {
             using var stream = typeof(ApprovalDecisionV1).Assembly.GetManifestResourceStream(resource)
@@ -158,8 +190,8 @@ public sealed class PolicyCanonicalTests
     {
         var proposal = Proposal(new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["selector_ref"] = "fixture.input",
-            ["value_ref"] = "fixture.value"
+            ["selector_ref"] = SelectorRef,
+            ["value_ref"] = ValueRef
         });
         var promotion = new ActionExecutionPromotionV1(
             ActionExecutionPromotionV1.CurrentSchemaVersion,
@@ -174,7 +206,7 @@ public sealed class PolicyCanonicalTests
             proposal.PlatformAccountId,
             proposal.TraceId,
             proposal.IdempotencyKey,
-            PolicyAuthorizationBinding.ComputeProposalSha256(proposal),
+            ActionProposalV2Canonical.ComputeSha256(proposal),
             new string('d', 64),
             7,
             proposal.OccurredAt,
@@ -305,6 +337,61 @@ public sealed class PolicyCanonicalTests
     }
 
     [Fact, Trait("Category", "Contract")]
+    public void EvaluationRequestContractIsVersionedSignatureFreeAndBounded()
+    {
+        var proposal = Proposal(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["selector_ref"] = SelectorRef,
+            ["value_ref"] = ValueRef
+        });
+        var shadow = EvaluationRequest(proposal);
+        shadow.Validate();
+        var payload = ApprovalEvaluationRequestV1Codec.Serialize(shadow);
+        Assert.Equal(shadow, ApprovalEvaluationRequestV1Codec.Deserialize(payload));
+        var json = Encoding.UTF8.GetString(payload);
+        Assert.Contains("\"execution_promotion_sha256\":null", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("requested_mode", json, StringComparison.Ordinal);
+        Assert.Equal(
+            "dps.policy-approval.approval-evaluation-request/v1",
+            ApprovalEvaluationRequestV1Canonical.Domain);
+
+        var commitment = ApprovalEvaluationRequestV1Canonical.ComputeCommitmentSha256(shadow);
+        Assert.Equal(
+            commitment,
+            ApprovalEvaluationRequestV1Canonical.ComputeCommitmentSha256(shadow with
+            {
+                SignatureBase64 = Convert.ToBase64String(Enumerable.Repeat((byte)0x5a, 64).ToArray())
+            }));
+        Assert.NotEqual(
+            commitment,
+            ApprovalEvaluationRequestV1Canonical.ComputeCommitmentSha256(shadow with
+            {
+                ReleaseBomSha256 = new string('e', 64)
+            }));
+        var execute = EvaluationRequest(proposal, new string('f', 64));
+        Assert.Equal(execute, ApprovalEvaluationRequestV1Codec.Deserialize(
+            ApprovalEvaluationRequestV1Codec.Serialize(execute)));
+        Assert.NotEqual(commitment, ApprovalEvaluationRequestV1Canonical.ComputeCommitmentSha256(execute));
+
+        Assert.Throws<NotSupportedException>(() => (shadow with { ContractId = "approval.evaluation.request/v2" }).Validate());
+        Assert.Throws<NotSupportedException>(() => (shadow with { ProducerModule = "model" }).Validate());
+        Assert.Throws<NotSupportedException>(() => (shadow with { AuthScope = "policy:promote" }).Validate());
+        Assert.Throws<NotSupportedException>(() => (shadow with { Mode = "execute" }).Validate());
+        Assert.Throws<ArgumentException>(() => (shadow with { ExecutionPromotionSha256 = new string('f', 64) }).Validate());
+        Assert.Throws<ArgumentException>(() => (execute with { ExecutionPromotionSha256 = null }).Validate());
+        Assert.Throws<ArgumentException>(() => (shadow with { ValidUntil = shadow.ValidUntil.AddTicks(1) }).Validate());
+        Assert.Throws<ArgumentException>(() => (shadow with { ValidUntil = shadow.ValidUntil.AddTicks(-1) }).Validate());
+        Assert.Throws<ArgumentException>(() => (shadow with { SignatureBase64 = new string('A', 88) }).Validate());
+        Assert.Throws<ArgumentException>(() => ApprovalEvaluationRequestV1Codec.Deserialize(
+            new byte[ApprovalEvaluationRequestV1Codec.MaximumPayloadBytes + 1]));
+        var duplicate = Encoding.UTF8.GetBytes(json.Replace(
+            "\"schema_version\":\"1.0.0\",",
+            "\"schema_version\":\"1.0.0\",\"schema_version\":\"1.0.0\",",
+            StringComparison.Ordinal));
+        Assert.Throws<ArgumentException>(() => ApprovalEvaluationRequestV1Codec.Deserialize(duplicate));
+    }
+
+    [Fact, Trait("Category", "Contract")]
     public void OwnedContractCorporaMatchStrictCodecsAndLockedCaseIds()
     {
         AssertCodecCorpus(
@@ -319,6 +406,10 @@ public sealed class PolicyCanonicalTests
             "Dps.PolicyApproval.Contracts.approval.execution.fence.v1.corpus.json",
             FenceCorpusCaseIds,
             payload => ApprovalExecutionFenceV1Codec.Deserialize(payload));
+        AssertCodecCorpus(
+            "Dps.PolicyApproval.Contracts.approval.evaluation.request.v1.corpus.json",
+            EvaluationRequestCorpusCaseIds,
+            payload => ApprovalEvaluationRequestV1Codec.Deserialize(payload));
 
         var decisionPayload = ApprovalDecisionV1Codec.Serialize(
             Decision("observe", false, []));
@@ -411,11 +502,11 @@ public sealed class PolicyCanonicalTests
             null,
             ["SHADOW_ONLY"]);
 
-    private static ActionProposalV1 Proposal(IReadOnlyDictionary<string, string> parameters)
+    private static ActionProposalV2 Proposal(IReadOnlyDictionary<string, string> parameters)
         => new(
-            ActionProposalV1.CurrentSchemaVersion,
-            ActionProposalV1.CurrentContractId,
-            ActionProposalV1.CurrentProducerModule,
+            ActionProposalV2.CurrentSchemaVersion,
+            ActionProposalV2.CurrentContractId,
+            ActionProposalV2.CurrentProducerModule,
             ActionProposalIdentity.Create(Soul, Device, Account, Idempotency),
             Soul,
             Device,
@@ -428,7 +519,32 @@ public sealed class PolicyCanonicalTests
             true,
             true,
             parameters,
-            ["evidence:canonical"]);
+            [EvidenceRef]);
+
+    private static ApprovalEvaluationRequestV1 EvaluationRequest(
+        ActionProposalV2 proposal,
+        string? executionPromotionSha256 = null)
+        => new(
+            ApprovalEvaluationRequestV1.CurrentSchemaVersion,
+            ApprovalEvaluationRequestV1.CurrentContractId,
+            ApprovalEvaluationRequestV1.CurrentProducerModule,
+            ApprovalEvaluationRequestV1.CurrentAuthScope,
+            proposal.ProposalId,
+            ActionProposalV2Canonical.ComputeSha256(proposal),
+            proposal.SoulId,
+            proposal.DeviceBindingId,
+            proposal.PlatformAccountId,
+            proposal.TraceId,
+            proposal.IdempotencyKey,
+            new string('d', 64),
+            executionPromotionSha256 is null
+                ? ApprovalEvaluationRequestV1.Shadow
+                : ApprovalEvaluationRequestV1.Execute,
+            executionPromotionSha256,
+            proposal.OccurredAt,
+            proposal.OccurredAt + ApprovalEvaluationRequestV1.Lifetime,
+            "internal",
+            Convert.ToBase64String(new byte[64]));
 
     private static ApprovalExecutionFenceV1 Fence()
     {

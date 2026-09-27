@@ -761,7 +761,7 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
         Assert.Equal(beforeTruncate, await ReadLifecycleRowsAsync());
     }
 
-    private static async Task<(ActionProposalV1 Proposal, PolicyApprovalAuthoritativeSnapshot Snapshot)> IssueApprovedAsync(
+    private static async Task<(ActionProposalV2 Proposal, PolicyApprovalAuthoritativeSnapshot Snapshot)> IssueApprovedAsync(
         PolicyApprovalTestDatabase database,
         ECDsa evaluationSigner,
         ECDsa revocationSigner,
@@ -779,7 +779,7 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
             AccountA,
             cancellationToken);
 
-    private static async Task<(ActionProposalV1 Proposal, PolicyApprovalAuthoritativeSnapshot Snapshot)> IssueApprovedForScopeAsync(
+    private static async Task<(ActionProposalV2 Proposal, PolicyApprovalAuthoritativeSnapshot Snapshot)> IssueApprovedForScopeAsync(
         PolicyApprovalTestDatabase database,
         ECDsa evaluationSigner,
         ECDsa revocationSigner,
@@ -796,7 +796,7 @@ public sealed partial class PostgresPolicyApprovalIntegrationTests
             revocationSigner,
             authorityTopology: authorityTopology);
         var proposal = Proposal(soulId, deviceBindingId, platformAccountId, "idem-" + label);
-        var result = await service.EvaluateAndAppendAsync(proposal, SignEvaluation(evaluationSigner, proposal), cancellationToken);
+        var result = await service.EvaluateSignedAsync(SignEvaluation(evaluationSigner, proposal), cancellationToken);
         return (proposal, result.Snapshot);
     }
 

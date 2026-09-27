@@ -65,6 +65,20 @@
       "candidateGreenEligible": false
     },
     {
+      "moduleId": "policy-approval",
+      "declarationKind": "consumed",
+      "contractId": "action.proposal",
+      "major": 2,
+      "source": "Modules/planner/contracts/provided/action.proposal.v2.schema.json",
+      "status": "proposed",
+      "mode": "active",
+      "ownerModule": "planner",
+      "schemaProducers": [
+        "planner"
+      ],
+      "candidateGreenEligible": true
+    },
+    {
       "moduleId": "planner",
       "declarationKind": "provided",
       "contractId": "action.proposal",
@@ -103,6 +117,20 @@
       "ownerModule": "policy-approval",
       "schemaProducers": [
         "policy-approval"
+      ],
+      "candidateGreenEligible": true
+    },
+    {
+      "moduleId": "policy-approval",
+      "declarationKind": "provided",
+      "contractId": "approval.evaluation.request",
+      "major": 1,
+      "source": "Modules/policy-approval/contracts/provided/approval.evaluation.request.v1.schema.json",
+      "status": "proposed",
+      "mode": "active",
+      "ownerModule": "policy-approval",
+      "schemaProducers": [
+        "control-plane-host"
       ],
       "candidateGreenEligible": true
     },
@@ -2543,7 +2571,7 @@
       "runnable": false,
       "deployable": false,
       "independentDeployable": false,
-      "compatibilityGroupRequired": false,
+      "compatibilityGroupRequired": true,
       "activeProducerConsumer": false,
       "candidateGreenEligible": false
     },
@@ -2561,19 +2589,19 @@
       "transportReceiverModule": "policy-approval",
       "transportPreservesProducer": false,
       "consumerModule": "policy-approval",
-      "consumerDeclarationKind": null,
-      "consumerMode": null,
-      "producerResolution": "unresolved",
-      "communicationPairSha256": null,
-      "reciprocalResolved": false,
+      "consumerDeclarationKind": "consumed",
+      "consumerMode": "active",
+      "producerResolution": "schema-producer-is-transport-sender",
+      "communicationPairSha256": "d5aae24bb3fdb6187183550c6b2d98205ea7de30565aecdf340381a71211e555",
+      "reciprocalResolved": true,
       "direction": "current-producer-to-current-consumer",
-      "executionClass": "missing-declaration",
+      "executionClass": "active-runtime",
       "readCompatible": false,
-      "runnable": false,
-      "deployable": false,
+      "runnable": true,
+      "deployable": true,
       "independentDeployable": false,
-      "compatibilityGroupRequired": false,
-      "activeProducerConsumer": false,
+      "compatibilityGroupRequired": true,
+      "activeProducerConsumer": true,
       "candidateGreenEligible": false
     },
     {
@@ -2604,6 +2632,35 @@
       "compatibilityGroupRequired": false,
       "activeProducerConsumer": true,
       "candidateGreenEligible": true
+    },
+    {
+      "contractId": "approval.evaluation.request",
+      "major": 1,
+      "ownerModule": "policy-approval",
+      "ownerMode": "active",
+      "producerModule": "control-plane-host",
+      "producerDeclarationKind": null,
+      "producerMode": null,
+      "transportSenderModule": "control-plane-host",
+      "transportSenderMode": null,
+      "transportSenderDeclarationKind": null,
+      "transportReceiverModule": "policy-approval",
+      "transportPreservesProducer": false,
+      "consumerModule": "policy-approval",
+      "consumerDeclarationKind": "provided",
+      "consumerMode": "active",
+      "producerResolution": "unresolved",
+      "communicationPairSha256": null,
+      "reciprocalResolved": false,
+      "direction": "current-producer-to-current-consumer",
+      "executionClass": "missing-declaration",
+      "readCompatible": false,
+      "runnable": false,
+      "deployable": false,
+      "independentDeployable": false,
+      "compatibilityGroupRequired": false,
+      "activeProducerConsumer": false,
+      "candidateGreenEligible": false
     },
     {
       "contractId": "approval.execution.fence",

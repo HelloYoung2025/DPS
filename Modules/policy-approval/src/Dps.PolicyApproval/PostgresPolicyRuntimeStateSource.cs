@@ -107,7 +107,7 @@ public sealed class PostgresPolicyRuntimeStateSource : IPolicyRuntimeStateSource
     }
 
     public async ValueTask<PolicyRuntimeState> ReadVerifiedStateAsync(
-        ActionProposalV1 proposal,
+        ActionProposalV2 proposal,
         CancellationToken cancellationToken)
     {
         proposal = PolicyCanonicalization.SnapshotProposal(proposal);
@@ -125,7 +125,7 @@ public sealed class PostgresPolicyRuntimeStateSource : IPolicyRuntimeStateSource
     private async ValueTask<PolicyRuntimeState> ReadFromConnectionAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
-        ActionProposalV1 proposal,
+        ActionProposalV2 proposal,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand(

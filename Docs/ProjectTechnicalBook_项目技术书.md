@@ -341,7 +341,7 @@ Modules/<module-id>/
 | `gbrain-projector` | 0.2.0 | R2 | Source binding + projection v2 | DTO only，不联网 |
 | `soul-memory-adapter` | 0.2.0 | R3 | GBrain OAuth/MCP 隔离 | 仍消费 v1，阻断 |
 | `planner` | 0.2.0 | R3 | Shadow 动作提案 | v2 producer |
-| `policy-approval` | 0.6.0 | R3 | Policy、批准、promotion/fence | 仍消费 planner v1，阻断 |
+| `policy-approval` | 0.7.0 | R3 | Policy、批准、promotion/fence | 消费 planner v2（影子评估），v1 仅隔离；Host 尚未生产评估请求 |
 | `operation-compiler` | 0.3.0 | R3 | 批准动作编译为 typed steps | proposed |
 | `command-orchestrator` | 0.2.0 | R3 | 幂等、lease、重试与恢复 | proposed |
 | `executor-gateway` | 0.1.0 | R3 | native + postcondition 真相 | 需 Windows/Zenno/ADB |
@@ -440,7 +440,7 @@ Modules/<module-id>/
 
 当前治理仍失败，不能生成可发布 BOM。主要红项：
 
-- Planner 生产 v2，Policy 仍消费 v1。
+- Planner 生产 v2，Policy 已消费 v2 做影子评估、v1 仅隔离；Control Plane Host 尚未生产 `approval.evaluation.request/v1`，全链未闭合。
 - GBrain Projector 生产 v2，SoulMemory/Evidence 仍有 v1。
 - Factory Intake/Resolver 已 v2，Impact/Worktree/Runner/Host 仍有 v1。
 - Release Controller 已 rollout v2，Rollback/Host 仍有 v1。
@@ -865,7 +865,7 @@ git status --short --branch
 ### 15.4 高优先级技术阻断
 
 1. GBrain Projector v2 与 SoulMemory Adapter/Evidence v1 不兼容。
-2. Planner v2 与 Policy v1 不兼容。
+2. Planner v2 → Policy 全链未闭合：Policy 已消费 v2（影子评估，v1 仅隔离），Control Plane Host 尚未生产评估请求。
 3. Factory Intake/Resolver/Release v2 与下游 v1 断层。
 4. DAG/compatibility 快照过期，通信和 owner 校验失败。
 5. Persona→GBrain 写链、spoken 事件、Interest Postgres store 未闭合。
