@@ -5,8 +5,235 @@
   "manifest_ownership_sha256": "15f3bac167171d764e79d881136addba3f66896390a431439cdbfcd326f28ca6",
   "hash_domains": {
     "component": "dps.upgrade-intent/v2/public-contract-changes",
-    "quarantine_evidence": "dps.upgrade-intent/v2/quarantine-import-evidence"
+    "quarantine_evidence": "dps.upgrade-intent/v2/quarantine-import-evidence",
+    "manifest_ownership": "dps.manifest-ownership/v1",
+    "requester_auth_context": "dps.requester-auth-context/v1",
+    "approval_subject": "dps.upgrade-intent/v2/approval-subject",
+    "full_intent": "dps.upgrade-intent/v2/full-intent"
   },
+  "intent_vectors": [
+    {
+      "valid_ref": "no-public-contract-change",
+      "requester_auth_record": {
+        "context_id": "authctx:contract0001",
+        "subject": "module-implementer-1",
+        "role": "module-implementer",
+        "audience": "dps.factory-upgrade-intake",
+        "issued_at": "2026-07-15T00:00:00Z",
+        "expires_at": "2026-07-15T00:10:00Z",
+        "nonce": "nonce_44444444444444444444444444444444",
+        "receipt_id": "auth:contract0001",
+        "approvals": [],
+        "verification_material": {
+          "signature": "contract-fixture"
+        }
+      },
+      "intent": {
+        "schema_version": "dps.upgrade-intent/v2",
+        "contract_id": "upgrade.intent/v2",
+        "producer_module": "factory-upgrade-intake",
+        "soul_id": null,
+        "device_binding_id": null,
+        "platform_account_id": null,
+        "trace_id": "trace_55555555555555555555555555555555",
+        "idempotency_key": "idem_6666666666666666666666666666666666666666666666666666666666666666",
+        "occurred_at": "2026-07-15T00:04:00Z",
+        "privacy_class": "internal",
+        "intent_id": "intent:contract0001",
+        "auth_context_id": "authctx:contract0001",
+        "requester_auth_context_sha256": "1f0a5cf504b2c6dd0ca44313bd58782db926b97a4bb5eaf2991e98b987cc83a4",
+        "requester_auth_receipt_id": "auth:contract0001",
+        "requester_auth_nonce": "nonce_44444444444444444444444444444444",
+        "baseline_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_ownership_sha256": "15f3bac167171d764e79d881136addba3f66896390a431439cdbfcd326f28ca6",
+        "manifest_ownership_receipt_id": "manifest:contract0001",
+        "target_modules": [
+          "factory-upgrade-intake"
+        ],
+        "requested_paths": [
+          "Modules/factory-upgrade-intake/src/upgrade_intake.py"
+        ],
+        "public_contract_changes": [],
+        "public_contract_changes_sha256": "70a8063ef997792467dd596e919a6f61db207a875f049262f42da92ea78c2a20",
+        "contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "baseline_verification_required": true,
+        "approval_subject_sha256": "156c3138d520785bf3197735132966fcf8f5743bc3c703df5abe52dab78fb641",
+        "upgrade_intent_sha256": "9c2b568cd243578c7dda25b98f73182efd12655dedadaa3c23a03926b6e97e7e",
+        "requested_risk_tier": "R1",
+        "requested_stage": "development",
+        "requester": {
+          "identity": "module-implementer-1",
+          "role": "module-implementer"
+        },
+        "authorization": {
+          "status": "not-required",
+          "approved_by": null,
+          "approver_role": "not-applicable",
+          "approval_scope": [],
+          "approval_receipt_id": null,
+          "approval_nonce": null,
+          "approved_at": null,
+          "approval_expires_at": null
+        }
+      },
+      "requester_auth_context_sha256": "1f0a5cf504b2c6dd0ca44313bd58782db926b97a4bb5eaf2991e98b987cc83a4",
+      "approval_subject_sha256": "156c3138d520785bf3197735132966fcf8f5743bc3c703df5abe52dab78fb641",
+      "upgrade_intent_sha256": "9c2b568cd243578c7dda25b98f73182efd12655dedadaa3c23a03926b6e97e7e",
+      "wire_sha256": "a52c293fdf97c810b0a06c07424184668aac43d4b7c890f62ca825bb638f69a5"
+    },
+    {
+      "valid_ref": "v1-quarantine-import-plus-v2-active",
+      "requester_auth_record": {
+        "context_id": "authctx:contract0001",
+        "subject": "module-implementer-1",
+        "role": "module-implementer",
+        "audience": "dps.factory-upgrade-intake",
+        "issued_at": "2026-07-15T00:00:00Z",
+        "expires_at": "2026-07-15T00:10:00Z",
+        "nonce": "nonce_44444444444444444444444444444444",
+        "receipt_id": "auth:contract0001",
+        "approvals": [],
+        "verification_material": {
+          "signature": "contract-fixture"
+        }
+      },
+      "intent": {
+        "schema_version": "dps.upgrade-intent/v2",
+        "contract_id": "upgrade.intent/v2",
+        "producer_module": "factory-upgrade-intake",
+        "soul_id": null,
+        "device_binding_id": null,
+        "platform_account_id": null,
+        "trace_id": "trace_55555555555555555555555555555555",
+        "idempotency_key": "idem_6666666666666666666666666666666666666666666666666666666666666666",
+        "occurred_at": "2026-07-15T00:04:00Z",
+        "privacy_class": "internal",
+        "intent_id": "intent:contract0001",
+        "auth_context_id": "authctx:contract0001",
+        "requester_auth_context_sha256": "1f0a5cf504b2c6dd0ca44313bd58782db926b97a4bb5eaf2991e98b987cc83a4",
+        "requester_auth_receipt_id": "auth:contract0001",
+        "requester_auth_nonce": "nonce_44444444444444444444444444444444",
+        "baseline_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_ownership_sha256": "15f3bac167171d764e79d881136addba3f66896390a431439cdbfcd326f28ca6",
+        "manifest_ownership_receipt_id": "manifest:contract0001",
+        "target_modules": [
+          "factory-upgrade-intake"
+        ],
+        "requested_paths": [
+          "Modules/factory-upgrade-intake/contracts/provided/upgrade.intent.v1.schema.json",
+          "Modules/factory-upgrade-intake/contracts/provided/upgrade.intent.v2.schema.json",
+          "Modules/factory-upgrade-intake/src/upgrade_intake.py"
+        ],
+        "public_contract_changes": [
+          {
+            "contract_id": "upgrade.intent",
+            "major": 1,
+            "baseline_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expected_mode": "quarantine-only",
+            "expected_status": "deprecated",
+            "expected_baseline_state": "absent",
+            "change_kind": "introduce-quarantined-major",
+            "expected_owner_module": "factory-upgrade-intake",
+            "expected_source": "Modules/factory-upgrade-intake/contracts/provided/upgrade.intent.v1.schema.json",
+            "expected_source_sha256": "01d57cbd2c2aef67c216c7375950cf324159e0c823a1e52290aae22efd81862a",
+            "expected_previous_mode": null,
+            "expected_previous_source_sha256": null,
+            "quarantine_reason": "historical-wire-import-no-baseline-major",
+            "quarantine_evidence_sha256": "cfaddfdb7d4f3d1e604c64694b0abae0d2ed5b33e58af4e6b22b6a5bc5146678"
+          },
+          {
+            "contract_id": "upgrade.intent",
+            "major": 2,
+            "baseline_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expected_mode": "active",
+            "expected_status": "proposed",
+            "expected_baseline_state": "absent",
+            "change_kind": "add-major",
+            "expected_owner_module": "factory-upgrade-intake",
+            "expected_source": "Modules/factory-upgrade-intake/contracts/provided/upgrade.intent.v2.schema.json",
+            "expected_source_sha256": "26bd5431c35169f587fff69151568bec01812daccef4abdb1f7cb21db5d846b5",
+            "expected_previous_mode": null,
+            "expected_previous_source_sha256": null,
+            "quarantine_reason": null,
+            "quarantine_evidence_sha256": null
+          }
+        ],
+        "public_contract_changes_sha256": "d5619953298ca442e36ea3e3d090e56973dd4bb82b57b97fe12404458fb1e5c4",
+        "contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "baseline_verification_required": true,
+        "approval_subject_sha256": "63186923c0484d6de33118611ba135404147e6e80e78eca8dad3d8aaa495059b",
+        "upgrade_intent_sha256": "f947c7e122b425a5497e8587f8746b6eaa9e112f221493c3c52fa6216a5ba0cf",
+        "requested_risk_tier": "R1",
+        "requested_stage": "development",
+        "requester": {
+          "identity": "module-implementer-1",
+          "role": "module-implementer"
+        },
+        "authorization": {
+          "status": "not-required",
+          "approved_by": null,
+          "approver_role": "not-applicable",
+          "approval_scope": [],
+          "approval_receipt_id": null,
+          "approval_nonce": null,
+          "approved_at": null,
+          "approval_expires_at": null
+        }
+      },
+      "requester_auth_context_sha256": "1f0a5cf504b2c6dd0ca44313bd58782db926b97a4bb5eaf2991e98b987cc83a4",
+      "approval_subject_sha256": "63186923c0484d6de33118611ba135404147e6e80e78eca8dad3d8aaa495059b",
+      "upgrade_intent_sha256": "f947c7e122b425a5497e8587f8746b6eaa9e112f221493c3c52fa6216a5ba0cf",
+      "wire_sha256": "49ffaceab3672dcf05d811d5af6eec51951e9976ba729eecd8961094c12c6dd4"
+    }
+  ],
+  "canonical_vectors": [
+    {
+      "name": "non_ascii",
+      "value": {
+        "s": "é中🙂"
+      },
+      "canonical": "{\"s\":\"é中🙂\"}",
+      "sha256": "c2eb647dc54c8959e4cafb136e144d5a4c3f704fcd00c627c276e868552abb8f"
+    },
+    {
+      "name": "nested_key_order",
+      "value": {
+        "b": {
+          "z": 1,
+          "a": [
+            {
+              "d": 2,
+              "c": 3
+            }
+          ]
+        },
+        "a": "x"
+      },
+      "canonical": "{\"a\":\"x\",\"b\":{\"a\":[{\"c\":3,\"d\":2}],\"z\":1}}",
+      "sha256": "5483227d41280a87b45ecb51df928422ef33daf5c5c13689efba58ffec6a75b6"
+    },
+    {
+      "name": "integers",
+      "value": [
+        0,
+        -1,
+        2147483647,
+        -2147483648
+      ],
+      "canonical": "[0,-1,2147483647,-2147483648]",
+      "sha256": "3290f5f03c9e120d67c8efd90c006bbe0464fffbc8abf0b015d8d3b2632cdaa6"
+    },
+    {
+      "name": "literals",
+      "value": {
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "canonical": "{\"f\":false,\"n\":null,\"t\":true}",
+      "sha256": "22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+    }
+  ],
   "templates": {
     "v2_add_major": {
       "contract_id": "upgrade.intent",

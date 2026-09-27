@@ -8,6 +8,17 @@
 - `factory-artifact-builder` 0.2.1: the build-identity constraint expectation now equals PostgreSQL 18.4's exact catalog output for migration v1, including its `NOT NULL` constraint rows.
 - It authorizes no release or activation.
 
+### P04 Factory owner contract freeze
+
+- Freeze the current owned `upgrade.intent/v2`, `instruction.receipt/v2` and `module.change.plan/v2` contracts by owner tests that pin Schema bytes, committed production-derived corpora, digest vectors and canonicalizer behavior. Undomained receipt and plan digests are frozen unchanged; any change requires a new major.
+- Correct the technical book's Impact status to the current Manifest. No source, Schema byte, Manifest, module version, consumer, or active/quarantine state changes; this authorizes no release or activation.
+
+### M19 Factory FIX and P04F integration
+
+- This merge integrates only the frozen FIX-M16-M26 (`6ba8ca0`) and P04F (`0b72b21`) candidates, both based on `199b209`; both sides' changelog entries are kept verbatim.
+- It does not change product behavior.
+- It authorizes no release or activation.
+
 ### P17A/P17B mainline integration
 
 - This merge integrates only P17A and P17B (`fede545`) into mainline `afb4f9b`; both sides' changelog entries are kept verbatim.

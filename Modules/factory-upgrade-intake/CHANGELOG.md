@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Froze the owned upgrade.intent/v2 contract: completed the corpus hash-domain list and appended committed requester-context, approval-subject, full-intent, and wire digest vectors plus shared canonicalizer vectors, all recomputed by the contract suite. Existing corpus entries, Schema bytes, source, and the module version are unchanged.
+
 ## 0.2.0 - 2026-07-15
 
 - Added the breaking active `upgrade.intent/v2` REQUESTED-claim contract. It binds requester authentication receipt/nonce, exact baseline, verified Manifest ownership snapshot/receipt, requested scope, unverified expected contract changes, requested risk/stage, authorization, and the full intent digest.

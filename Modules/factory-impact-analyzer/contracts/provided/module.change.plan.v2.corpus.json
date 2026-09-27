@@ -1,0 +1,491 @@
+{
+  "schema_version": "dps.module-change-plan-contract-corpus/v2",
+  "contract_id": "module.change.plan/v2",
+  "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+  "templates": {
+    "v2_schema": {
+      "contract_id": "module.change.plan",
+      "major": 2,
+      "expected_source": "Modules/factory-impact-analyzer/contracts/provided/module.change.plan.v2.schema.json",
+      "expected_source_sha256": "e26d6a284a49368537dcbcc896ebbbd6afac636eac991fb8e1ca96d5396f0189"
+    }
+  },
+  "valid": [
+    {
+      "name": "additive-schema",
+      "plan": {
+        "schema_version": "dps.module-change-plan/v2",
+        "contract_id": "module.change.plan/v2",
+        "producer_module": "factory-impact-analyzer",
+        "soul_id": null,
+        "device_binding_id": null,
+        "platform_account_id": null,
+        "trace_id": "trace_22222222222222222222222222222222",
+        "idempotency_key": "idem_3333333333333333333333333333333333333333333333333333333333333333",
+        "occurred_at": "2026-07-15T01:00:00Z",
+        "privacy_class": "internal",
+        "intent_id": "intent:impact0001",
+        "instruction_receipt_id": "instruction:0ec83d46b8883c82499242ba7e433b4f",
+        "instruction_receipt_sha256": "ce08966a3cbfdbfa0c11f9ee32eeef28c02e5b3ece26455d5d641f966a5301b6",
+        "source_upgrade_intent_sha256": "87c2f815007c61e29cd17c6dc66065a4afb35259e5e13b60285ae22d862f2c3f",
+        "source_intake_payload_sha256": "2ca6ce380ee029604506713087d841f1491ffe58c6d75f908e37f4cf9f239cc0",
+        "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+        "diff_fingerprint": "00f0208e69d6ea22a4d59366eb3698b93db6c89462311dd5768b494bb0254fa4",
+        "instruction_scope": [
+          "alpha-module",
+          "exact-consumer"
+        ],
+        "instruction_scope_sha256": "4c1be2d604e6f4bdf1b4a53214243fc164c5949492aaf5eb57aab6c17eeac3e6",
+        "write_modules": [
+          "alpha-module"
+        ],
+        "authorized_write_paths": [
+          "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+          "Modules/alpha-module/src/domain.py"
+        ],
+        "authorized_write_paths_sha256": "20ae990d8b386a4018bc83cb5bcc429f40e19aa8cf3c2b9c21b12ecb0db11341",
+        "write_scope_sha256": "021df16a6a875f52cc061076bb8ac8d9ebcfd727a88076ae991b2458334939ad",
+        "source_contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "source_contract_change_claims_sha256": "3e300cd0e08ce4f0ebc45160dece6c31fcdde4ce5ced2627cca99afa14e402b7",
+        "bound_contract_change_expectations": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "change_kind": "additive-schema",
+            "contract_id": "alpha.event",
+            "expected_baseline_state": "present",
+            "expected_mode": "active",
+            "expected_owner_module": "alpha-module",
+            "expected_previous_mode": "active",
+            "expected_previous_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "expected_source_sha256": "3da9a5de3ed9466cef8df57f7180fcf949008853e4f8872c1294b38c065884ae",
+            "expected_status": "proposed",
+            "major": 1,
+            "quarantine_evidence_sha256": null,
+            "quarantine_reason": null
+          }
+        ],
+        "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891",
+        "changeset_contract_verification_required": true,
+        "dependency_edges": [
+          {
+            "consumer": "exact-consumer",
+            "provider": "alpha-module"
+          }
+        ],
+        "parallel_waves": [
+          [
+            "alpha-module"
+          ],
+          [
+            "exact-consumer"
+          ]
+        ],
+        "requested_risk_tier": "R1",
+        "effective_risk_tier": "R2",
+        "requested_stage": "development",
+        "planned_stage": "development",
+        "required_checks": [
+          "contract.compatibility",
+          "integration.replay",
+          "merge.head",
+          "module.unit",
+          "phase0.repository"
+        ],
+        "role_assignments": {
+          "contract_architect": [
+            "factory-contract-architect"
+          ],
+          "evidence_auditor": [
+            "factory-evidence-auditor"
+          ],
+          "impact_planner": [
+            "factory-impact-planner"
+          ],
+          "independent_test_agent": [
+            "factory-independent-test-agent"
+          ],
+          "module_implementer": [
+            "factory-module-implementer-1",
+            "factory-module-implementer-2",
+            "factory-module-implementer-3",
+            "factory-module-implementer-4"
+          ],
+          "release_approver": [
+            "human-release-approver-1"
+          ],
+          "reliability_reviewer": [
+            "factory-reliability-reviewer"
+          ],
+          "security_privacy_adversary": [
+            "factory-security-privacy-adversary"
+          ],
+          "windows_zenno_reviewer": [
+            "factory-windows-zenno-reviewer"
+          ]
+        },
+        "trusted_policy_id": "factory-impact-shadow-2026-07-15",
+        "trusted_policy_sha256": "f682e4b5239e55df997caa951d0830f6c85a8c01893640f400161f7690222892",
+        "trusted_policy_status": "non-production-template",
+        "portable_trust_status": "WAITING_EXTERNAL",
+        "release_eligible": false,
+        "side_effects_authorized": false,
+        "shadow_side_effect_count": 0,
+        "plan_id": "change:e353ec471303ea3ced5decac2acd8f69",
+        "plan_sha256": "96c6336467eecee32ee19c54ae91e56d34cbf4606b0c98df00aeb7be7c1b9a83"
+      },
+      "plan_sha256": "96c6336467eecee32ee19c54ae91e56d34cbf4606b0c98df00aeb7be7c1b9a83",
+      "plan_id": "change:e353ec471303ea3ced5decac2acd8f69",
+      "instruction_scope_sha256": "4c1be2d604e6f4bdf1b4a53214243fc164c5949492aaf5eb57aab6c17eeac3e6",
+      "authorized_write_paths_sha256": "20ae990d8b386a4018bc83cb5bcc429f40e19aa8cf3c2b9c21b12ecb0db11341",
+      "write_scope_sha256": "021df16a6a875f52cc061076bb8ac8d9ebcfd727a88076ae991b2458334939ad",
+      "source_contract_change_claims_sha256": "3e300cd0e08ce4f0ebc45160dece6c31fcdde4ce5ced2627cca99afa14e402b7"
+    },
+    {
+      "name": "mode-transition",
+      "plan": {
+        "schema_version": "dps.module-change-plan/v2",
+        "contract_id": "module.change.plan/v2",
+        "producer_module": "factory-impact-analyzer",
+        "soul_id": null,
+        "device_binding_id": null,
+        "platform_account_id": null,
+        "trace_id": "trace_22222222222222222222222222222222",
+        "idempotency_key": "idem_3333333333333333333333333333333333333333333333333333333333333333",
+        "occurred_at": "2026-07-15T01:00:00Z",
+        "privacy_class": "internal",
+        "intent_id": "intent:impact0001",
+        "instruction_receipt_id": "instruction:df6417860bb1867f0837431071913198",
+        "instruction_receipt_sha256": "61050a8a0cad8b96f74dc8f4cf47d5400f24ba27c324778cbfc2250012104dfb",
+        "source_upgrade_intent_sha256": "7bed51b20614aa99a1508312cbe18d52d92f8f606d07c91aeaf0188d0e1da83a",
+        "source_intake_payload_sha256": "8851f4659b2cb693aaaa1d7152d2227674fc2c213e7e56a889e89a3c74788f22",
+        "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+        "diff_fingerprint": "4c4e9f11618875d65565f767361fa60077330eabd8051f914170a2c2ede5b563",
+        "instruction_scope": [
+          "alpha-module",
+          "exact-consumer"
+        ],
+        "instruction_scope_sha256": "4c1be2d604e6f4bdf1b4a53214243fc164c5949492aaf5eb57aab6c17eeac3e6",
+        "write_modules": [
+          "alpha-module"
+        ],
+        "authorized_write_paths": [
+          "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+          "Modules/alpha-module/src/domain.py"
+        ],
+        "authorized_write_paths_sha256": "20ae990d8b386a4018bc83cb5bcc429f40e19aa8cf3c2b9c21b12ecb0db11341",
+        "write_scope_sha256": "021df16a6a875f52cc061076bb8ac8d9ebcfd727a88076ae991b2458334939ad",
+        "source_contract_change_claims_status": "UNVERIFIED_EXPECTATIONS",
+        "source_contract_change_claims_sha256": "f85f6468871ec9e6b6a59876262ca58039c0fcbeb2215cea6ca5429ac62ee9b3",
+        "bound_contract_change_expectations": [
+          {
+            "baseline_commit": "72e33e6432d319449c9dffe5537f69cd18cac712",
+            "change_kind": "mode-transition",
+            "contract_id": "alpha.event",
+            "expected_baseline_state": "present",
+            "expected_mode": "quarantine-only",
+            "expected_owner_module": "alpha-module",
+            "expected_previous_mode": "active",
+            "expected_previous_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_source": "Modules/alpha-module/contracts/provided/alpha.event.v1.schema.json",
+            "expected_source_sha256": "b963bbaf67d6ecb7f521d830f9f15f9bfcbec04a166e33ae98fba5ddc629d880",
+            "expected_status": "deprecated",
+            "major": 1,
+            "quarantine_evidence_sha256": null,
+            "quarantine_reason": null
+          }
+        ],
+        "verified_baseline_contract_facts_sha256": "8a69bdee6f6ff5c838f16bd688777b919a88d803a6896be8317239decb041891",
+        "changeset_contract_verification_required": true,
+        "dependency_edges": [
+          {
+            "consumer": "exact-consumer",
+            "provider": "alpha-module"
+          }
+        ],
+        "parallel_waves": [
+          [
+            "alpha-module"
+          ],
+          [
+            "exact-consumer"
+          ]
+        ],
+        "requested_risk_tier": "R1",
+        "effective_risk_tier": "R3",
+        "requested_stage": "development",
+        "planned_stage": "development",
+        "required_checks": [
+          "contract.compatibility",
+          "integration.replay",
+          "merge.head",
+          "module.unit",
+          "phase0.repository",
+          "security.adversarial"
+        ],
+        "role_assignments": {
+          "contract_architect": [
+            "factory-contract-architect"
+          ],
+          "evidence_auditor": [
+            "factory-evidence-auditor"
+          ],
+          "impact_planner": [
+            "factory-impact-planner"
+          ],
+          "independent_test_agent": [
+            "factory-independent-test-agent"
+          ],
+          "module_implementer": [
+            "factory-module-implementer-1",
+            "factory-module-implementer-2",
+            "factory-module-implementer-3",
+            "factory-module-implementer-4"
+          ],
+          "release_approver": [
+            "human-release-approver-1"
+          ],
+          "reliability_reviewer": [
+            "factory-reliability-reviewer"
+          ],
+          "security_privacy_adversary": [
+            "factory-security-privacy-adversary"
+          ],
+          "windows_zenno_reviewer": [
+            "factory-windows-zenno-reviewer"
+          ]
+        },
+        "trusted_policy_id": "factory-impact-shadow-2026-07-15",
+        "trusted_policy_sha256": "f682e4b5239e55df997caa951d0830f6c85a8c01893640f400161f7690222892",
+        "trusted_policy_status": "non-production-template",
+        "portable_trust_status": "WAITING_EXTERNAL",
+        "release_eligible": false,
+        "side_effects_authorized": false,
+        "shadow_side_effect_count": 0,
+        "plan_id": "change:a8487b8e320bbf452963a7bb1571c747",
+        "plan_sha256": "696a7dccd72b9d7624f6e5119d9d4fbd68a94384505859c04d63dbe50898ea87"
+      },
+      "plan_sha256": "696a7dccd72b9d7624f6e5119d9d4fbd68a94384505859c04d63dbe50898ea87",
+      "plan_id": "change:a8487b8e320bbf452963a7bb1571c747",
+      "instruction_scope_sha256": "4c1be2d604e6f4bdf1b4a53214243fc164c5949492aaf5eb57aab6c17eeac3e6",
+      "authorized_write_paths_sha256": "20ae990d8b386a4018bc83cb5bcc429f40e19aa8cf3c2b9c21b12ecb0db11341",
+      "write_scope_sha256": "021df16a6a875f52cc061076bb8ac8d9ebcfd727a88076ae991b2458334939ad",
+      "source_contract_change_claims_sha256": "f85f6468871ec9e6b6a59876262ca58039c0fcbeb2215cea6ca5429ac62ee9b3"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-major",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "contract_id"
+          ],
+          "value": "module.change.plan/v3"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "extra-field",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "shell_command"
+          ],
+          "value": "not-a-contract-field"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "missing-receipt-digest",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "remove",
+          "path": [
+            "instruction_receipt_sha256"
+          ]
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "release-eligible",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "release_eligible"
+          ],
+          "value": true
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "side-effects",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "side_effects_authorized"
+          ],
+          "value": true
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "portable-verified",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "portable_trust_status"
+          ],
+          "value": "PORTABLE_VERIFIED"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "path-escape",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "authorized_write_paths",
+            0
+          ],
+          "value": "../escape.py"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "digest-newline",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "plan_sha256"
+          ],
+          "value": "96c6336467eecee32ee19c54ae91e56d34cbf4606b0c98df00aeb7be7c1b9a83\n"
+        }
+      ],
+      "schema_rejects": true,
+      "rejected_by": "schema"
+    },
+    {
+      "name": "plan-id-mismatch",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "plan_id"
+          ],
+          "value": "change:00000000000000000000000000000000"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "owner-recompute"
+    },
+    {
+      "name": "write-scope-digest-mismatch",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "write_scope_sha256"
+          ],
+          "value": "121df16a6a875f52cc061076bb8ac8d9ebcfd727a88076ae991b2458334939ad"
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "owner-recompute"
+    },
+    {
+      "name": "float-side-effect-count",
+      "base": "additive-schema",
+      "mutations": [
+        {
+          "op": "replace",
+          "path": [
+            "shadow_side_effect_count"
+          ],
+          "value": 0.0
+        }
+      ],
+      "schema_rejects": false,
+      "rejected_by": "owner-recompute"
+    }
+  ],
+  "canonical_vectors": [
+    {
+      "name": "non_ascii",
+      "value": {
+        "s": "é中🙂"
+      },
+      "canonical": "{\"s\":\"é中🙂\"}",
+      "sha256": "c2eb647dc54c8959e4cafb136e144d5a4c3f704fcd00c627c276e868552abb8f"
+    },
+    {
+      "name": "nested_key_order",
+      "value": {
+        "b": {
+          "z": 1,
+          "a": [
+            {
+              "d": 2,
+              "c": 3
+            }
+          ]
+        },
+        "a": "x"
+      },
+      "canonical": "{\"a\":\"x\",\"b\":{\"a\":[{\"c\":3,\"d\":2}],\"z\":1}}",
+      "sha256": "5483227d41280a87b45ecb51df928422ef33daf5c5c13689efba58ffec6a75b6"
+    },
+    {
+      "name": "integers",
+      "value": [
+        0,
+        -1,
+        2147483647,
+        -2147483648
+      ],
+      "canonical": "[0,-1,2147483647,-2147483648]",
+      "sha256": "3290f5f03c9e120d67c8efd90c006bbe0464fffbc8abf0b015d8d3b2632cdaa6"
+    },
+    {
+      "name": "literals",
+      "value": {
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "canonical": "{\"f\":false,\"n\":null,\"t\":true}",
+      "sha256": "22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+    }
+  ]
+}

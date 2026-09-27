@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Froze the owned module.change.plan/v2 contract with a committed production-derived corpus, pinned Schema digest, recomputed plan digests, Schema and owner-recomputation negatives, and shared canonicalizer vectors. Undomained plan digests are frozen unchanged; Schema bytes, source, and the module version are unchanged.
+
 ## 0.2.0 - 2026-07-15
 
 - Froze `upgrade.intent/v1`, `instruction.receipt/v1`, and `module.change.plan/v1` as deprecated quarantine-only wires with no runtime path.

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Froze the owned instruction.receipt/v2 contract with a committed production-derived corpus, pinned Schema digest, recomputed receipt digests, Schema and strict-parse negatives, and shared canonicalizer vectors. The Schema-only test fixture now takes its claims digest from the real Intake domain-separated function. Undomained receipt digests are frozen unchanged; Schema bytes, source, and the module version are unchanged.
+
 ## 0.4.0 - 2026-07-15
 
 - Replaced bare-JSON receipt currentness input with Resolver-private, process-bound `VerifiedInstructionReceiptV2`; it binds canonical bytes, full digest, receipt ID, issuer, audience, issue/expiry time, nonce, generation, producer/major, and status.

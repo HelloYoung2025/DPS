@@ -26,6 +26,54 @@ def load_module(name, path):
 PIPELINE = load_module(
     "impact_contract_pipeline_fixture", MODULE_ROOT / "tests/test_impact_analyzer.py"
 )
+IMPACT = PIPELINE.IMPACT
+REPOSITORY_ROOT = MODULE_ROOT.parents[1]
+PLAN_V2_SCHEMA = (
+    "Modules/factory-impact-analyzer/contracts/provided/module.change.plan.v2.schema.json"
+)
+PLAN_CORPUS_PATH = MODULE_ROOT / "contracts/provided/module.change.plan.v2.corpus.json"
+RECEIPT_CORPUS_PATH = (
+    MODULE_ROOT.parent
+    / "factory-instruction-resolver/contracts/provided/instruction.receipt.v2.corpus.json"
+)
+CANONICAL_VECTOR_NAMES = ["non_ascii", "nested_key_order", "integers", "literals"]
+
+
+def apply_corpus_mutations(value, mutations):
+    value = copy.deepcopy(value)
+    for mutation in mutations:
+        target = value
+        for key in mutation["path"][:-1]:
+            target = target[key]
+        if mutation["op"] == "remove":
+            del target[mutation["path"][-1]]
+        elif mutation["op"] == "replace":
+            target[mutation["path"][-1]] = mutation["value"]
+        else:
+            raise AssertionError("unknown corpus mutation operation")
+    return value
+
+
+def owner_plan_digests(plan):
+    """Recompute every undomained plan digest with the owner's production primitives."""
+    without_hash = dict(plan)
+    without_hash.pop("plan_sha256")
+    without_id = dict(without_hash)
+    without_id.pop("plan_id")
+    return {
+        "plan_sha256": IMPACT._sha256(IMPACT._canonical_bytes(without_hash)),
+        "plan_id": "change:" + IMPACT._sha256(IMPACT._canonical_bytes(without_id))[:32],
+        "instruction_scope_sha256": IMPACT._sha256(
+            IMPACT._canonical_bytes(plan["instruction_scope"])
+        ),
+        "authorized_write_paths_sha256": IMPACT._sha256(
+            IMPACT._canonical_bytes(plan["authorized_write_paths"])
+        ),
+        "write_scope_sha256": IMPACT._sha256(IMPACT._canonical_bytes({
+            "write_modules": plan["write_modules"],
+            "authorized_write_paths": plan["authorized_write_paths"],
+        })),
+    }
 
 
 def canonical_bytes(value):
@@ -185,6 +233,93 @@ class ModuleChangePlanV2ContractTests(unittest.TestCase):
             hashlib.sha256(v1).hexdigest(),
             hashlib.sha256(self.schema_path.read_bytes()).hexdigest(),
         )
+
+    def load_corpus(self, path):
+        self.assertTrue(path.is_file(), "owned contract corpus is missing: %s" % path.name)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_freeze_schema_bytes_are_pinned_by_owned_corpus(self):
+        template = self.load_corpus(PLAN_CORPUS_PATH)["templates"]["v2_schema"]
+        self.assertEqual(
+            ("module.change.plan", 2, PLAN_V2_SCHEMA),
+            (template["contract_id"], template["major"], template["expected_source"]),
+        )
+        self.assertEqual(
+            template["expected_source_sha256"],
+            hashlib.sha256((REPOSITORY_ROOT / PLAN_V2_SCHEMA).read_bytes()).hexdigest(),
+        )
+
+    def test_freeze_positive_plans_recompute_owner_digests(self):
+        corpus = self.load_corpus(PLAN_CORPUS_PATH)
+        receipts = {
+            case["name"]: case
+            for case in self.load_corpus(RECEIPT_CORPUS_PATH)["valid"]
+        }
+        self.assertTrue(corpus["valid"])
+        for case in corpus["valid"]:
+            with self.subTest(case=case["name"]):
+                plan = case["plan"]
+                self.validator.validate(plan)
+                IMPACT._schema_validate(
+                    copy.deepcopy(plan), IMPACT._PLAN_VALIDATOR, "corpus plan"
+                )
+                self.assertEqual(corpus["baseline_commit"], plan["baseline_commit"])
+                for field, digest in owner_plan_digests(plan).items():
+                    self.assertEqual(case[field], digest, field)
+                    self.assertEqual(digest, plan[field], field)
+                receipt = receipts[case["name"]]
+                self.assertEqual(
+                    receipt["receipt_sha256"], plan["instruction_receipt_sha256"]
+                )
+                self.assertEqual(receipt["receipt_id"], plan["instruction_receipt_id"])
+                self.assertEqual(
+                    receipt["source_contract_change_claims_sha256"],
+                    case["source_contract_change_claims_sha256"],
+                )
+                self.assertEqual(
+                    case["source_contract_change_claims_sha256"],
+                    plan["source_contract_change_claims_sha256"],
+                )
+
+    def test_freeze_negative_plans_fail_schema_or_owner_recompute(self):
+        corpus = self.load_corpus(PLAN_CORPUS_PATH)
+        valid = {case["name"]: case["plan"] for case in corpus["valid"]}
+        self.assertTrue(corpus["invalid"])
+        for case in corpus["invalid"]:
+            with self.subTest(case=case["name"]):
+                value = apply_corpus_mutations(valid[case["base"]], case["mutations"])
+                self.assertEqual(
+                    case["schema_rejects"],
+                    bool(list(self.validator.iter_errors(value))),
+                )
+                self.assertIn(case["rejected_by"], {"schema", "owner-recompute"})
+                if case["rejected_by"] == "schema":
+                    self.assertTrue(case["schema_rejects"])
+                    with self.assertRaises(IMPACT.ImpactError):
+                        IMPACT._schema_validate(
+                            value, IMPACT._PLAN_VALIDATOR, "corpus negative"
+                        )
+                else:
+                    self.assertFalse(case["schema_rejects"])
+                    mismatched = [
+                        field for field, digest in owner_plan_digests(value).items()
+                        if digest != value[field]
+                    ]
+                    self.assertTrue(mismatched)
+
+    def test_freeze_canonicalizer_vectors(self):
+        vectors = self.load_corpus(PLAN_CORPUS_PATH)["canonical_vectors"]
+        self.assertEqual(CANONICAL_VECTOR_NAMES, [vector["name"] for vector in vectors])
+        for vector in vectors:
+            with self.subTest(vector=vector["name"]):
+                actual = IMPACT._canonical_bytes(vector["value"])
+                self.assertEqual(vector["canonical"].encode("utf-8"), actual)
+                self.assertEqual(vector["sha256"], hashlib.sha256(actual).hexdigest())
+
+    def test_freeze_canonicalizer_rejects_non_finite_numbers(self):
+        for value in (float("nan"), float("inf"), {"a": float("-inf")}):
+            with self.assertRaises(IMPACT.ImpactError):
+                IMPACT._canonical_bytes(value)
 
 
 if __name__ == "__main__":
