@@ -27,6 +27,9 @@
       "dps.controlplanehost.contracts": {
         "type": "Project"
       },
+      "dps.planner.contracts": {
+        "type": "Project"
+      },
       "dps.policyapproval.contracts": {
         "type": "Project"
       },

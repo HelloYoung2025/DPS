@@ -1,0 +1,422 @@
+{
+  "schemaVersion": "dps.contract-corpus/v1",
+  "contractId": "approval.readback/v1",
+  "base": {
+    "schema_version": "1.0.0",
+    "contract_id": "approval.readback/v1",
+    "producer_module": "policy-approval",
+    "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "device_binding_id": "db_11111111111111111111111111111111",
+    "platform_account_id": "pa_33333333333333333333333333333333",
+    "trace_id": "trace_55555555555555555555555555555555",
+    "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+    "occurred_at": "2026-07-14T00:00:00Z",
+    "approval": {
+      "schema_version": "1.0.0",
+      "contract_id": "approval.decision/v1",
+      "producer_module": "policy-approval",
+      "approval_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "device_binding_id": "db_11111111111111111111111111111111",
+      "platform_account_id": "pa_33333333333333333333333333333333",
+      "trace_id": "trace_55555555555555555555555555555555",
+      "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+      "occurred_at": "2026-07-14T00:00:00Z",
+      "privacy_class": "internal",
+      "action_kind": "observe",
+      "is_side_effect": false,
+      "shadow_only": true,
+      "parameters": {},
+      "decision": "DENIED",
+      "authority": "deterministic-policy-engine",
+      "policy_version": "1.0.0",
+      "evaluated_policy_ids": [
+        "SOUL-ISO-001"
+      ],
+      "platform_authorization_id": null,
+      "denial_reasons": [
+        "SHADOW_ONLY"
+      ]
+    },
+    "approval_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "proposal_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "proposal_contract_major": 2,
+    "request_signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "status": "ACTIVE",
+    "status_revision": 1,
+    "valid_until": "2026-07-14T00:02:00Z",
+    "runtime_revision": 1,
+    "runtime_state_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "release_bom_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "privacy_class": "internal"
+  },
+  "cases": [
+    {
+      "id": "valid-v2-shadow",
+      "schemaValid": true,
+      "codecValid": true,
+      "patch": {},
+      "remove": []
+    },
+    {
+      "id": "valid-v2-approved",
+      "schemaValid": true,
+      "codecValid": true,
+      "patch": {
+        "approval": {
+          "schema_version": "1.0.0",
+          "contract_id": "approval.decision/v1",
+          "producer_module": "policy-approval",
+          "approval_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device_binding_id": "db_11111111111111111111111111111111",
+          "platform_account_id": "pa_33333333333333333333333333333333",
+          "trace_id": "trace_55555555555555555555555555555555",
+          "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+          "occurred_at": "2026-07-14T00:00:00Z",
+          "privacy_class": "internal",
+          "action_kind": "fixture.tap",
+          "is_side_effect": true,
+          "shadow_only": false,
+          "parameters": {
+            "selector_ref": "fixture.submit"
+          },
+          "decision": "APPROVED",
+          "authority": "deterministic-policy-engine",
+          "policy_version": "1.0.0",
+          "evaluated_policy_ids": [
+            "SOUL-ISO-001"
+          ],
+          "platform_authorization_id": "platform-auth-fixture-1",
+          "denial_reasons": []
+        }
+      },
+      "remove": []
+    },
+    {
+      "id": "valid-v1-historical-denied",
+      "schemaValid": true,
+      "codecValid": true,
+      "patch": {
+        "proposal_contract_major": 1,
+        "request_signature": null
+      },
+      "remove": []
+    },
+    {
+      "id": "valid-v1-approved-revoked",
+      "schemaValid": true,
+      "codecValid": true,
+      "patch": {
+        "approval": {
+          "schema_version": "1.0.0",
+          "contract_id": "approval.decision/v1",
+          "producer_module": "policy-approval",
+          "approval_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device_binding_id": "db_11111111111111111111111111111111",
+          "platform_account_id": "pa_33333333333333333333333333333333",
+          "trace_id": "trace_55555555555555555555555555555555",
+          "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+          "occurred_at": "2026-07-14T00:00:00Z",
+          "privacy_class": "internal",
+          "action_kind": "fixture.tap",
+          "is_side_effect": true,
+          "shadow_only": false,
+          "parameters": {
+            "selector_ref": "fixture.submit"
+          },
+          "decision": "APPROVED",
+          "authority": "deterministic-policy-engine",
+          "policy_version": "1.0.0",
+          "evaluated_policy_ids": [
+            "SOUL-ISO-001"
+          ],
+          "platform_authorization_id": "platform-auth-fixture-1",
+          "denial_reasons": []
+        },
+        "proposal_contract_major": 1,
+        "request_signature": null,
+        "status": "REVOKED",
+        "status_revision": 2
+      },
+      "remove": []
+    },
+    {
+      "id": "v1-active-executable-approval",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "approval": {
+          "schema_version": "1.0.0",
+          "contract_id": "approval.decision/v1",
+          "producer_module": "policy-approval",
+          "approval_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device_binding_id": "db_11111111111111111111111111111111",
+          "platform_account_id": "pa_33333333333333333333333333333333",
+          "trace_id": "trace_55555555555555555555555555555555",
+          "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+          "occurred_at": "2026-07-14T00:00:00Z",
+          "privacy_class": "internal",
+          "action_kind": "fixture.tap",
+          "is_side_effect": true,
+          "shadow_only": false,
+          "parameters": {
+            "selector_ref": "fixture.submit"
+          },
+          "decision": "APPROVED",
+          "authority": "deterministic-policy-engine",
+          "policy_version": "1.0.0",
+          "evaluated_policy_ids": [
+            "SOUL-ISO-001"
+          ],
+          "platform_authorization_id": "platform-auth-fixture-1",
+          "denial_reasons": []
+        },
+        "proposal_contract_major": 1,
+        "request_signature": null
+      },
+      "remove": []
+    },
+    {
+      "id": "v1-with-signature",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "proposal_contract_major": 1
+      },
+      "remove": []
+    },
+    {
+      "id": "v2-without-signature",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "request_signature": null
+      },
+      "remove": []
+    },
+    {
+      "id": "unknown-major",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "proposal_contract_major": 3
+      },
+      "remove": []
+    },
+    {
+      "id": "zero-major",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "proposal_contract_major": 0
+      },
+      "remove": []
+    },
+    {
+      "id": "unknown-status",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "status": "PENDING"
+      },
+      "remove": []
+    },
+    {
+      "id": "zero-status-revision",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "status_revision": 0
+      },
+      "remove": []
+    },
+    {
+      "id": "zero-runtime-revision",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "runtime_revision": 0
+      },
+      "remove": []
+    },
+    {
+      "id": "offset-not-zulu",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "valid_until": "2026-07-14T00:02:00+00:00"
+      },
+      "remove": []
+    },
+    {
+      "id": "digest-uppercase",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "proposal_sha256": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+      },
+      "remove": []
+    },
+    {
+      "id": "digest-short",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "approval_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "remove": []
+    },
+    {
+      "id": "trailing-newline-digest",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "release_bom_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+      },
+      "remove": []
+    },
+    {
+      "id": "malformed-signature",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "request_signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "remove": []
+    },
+    {
+      "id": "wrong-contract-id",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "contract_id": "approval.readback/v2"
+      },
+      "remove": []
+    },
+    {
+      "id": "wrong-producer",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "producer_module": "control-plane-host"
+      },
+      "remove": []
+    },
+    {
+      "id": "wrong-privacy-class",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "privacy_class": "personal"
+      },
+      "remove": []
+    },
+    {
+      "id": "additional-field",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "unexpected": true
+      },
+      "remove": []
+    },
+    {
+      "id": "missing-field",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {},
+      "remove": [
+        "request_signature"
+      ]
+    },
+    {
+      "id": "nested-approval-additional-field",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "approval": {
+          "schema_version": "1.0.0",
+          "contract_id": "approval.decision/v1",
+          "producer_module": "policy-approval",
+          "approval_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "soul_id": "soul_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device_binding_id": "db_11111111111111111111111111111111",
+          "platform_account_id": "pa_33333333333333333333333333333333",
+          "trace_id": "trace_55555555555555555555555555555555",
+          "idempotency_key": "idem_7777777777777777777777777777777777777777777777777777777777777777",
+          "occurred_at": "2026-07-14T00:00:00Z",
+          "privacy_class": "internal",
+          "action_kind": "observe",
+          "is_side_effect": false,
+          "shadow_only": true,
+          "parameters": {},
+          "decision": "DENIED",
+          "authority": "deterministic-policy-engine",
+          "policy_version": "1.0.0",
+          "evaluated_policy_ids": [
+            "SOUL-ISO-001"
+          ],
+          "platform_authorization_id": null,
+          "denial_reasons": [
+            "SHADOW_ONLY"
+          ],
+          "unexpected": true
+        }
+      },
+      "remove": []
+    },
+    {
+      "id": "approval-not-object",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "approval": "DENIED"
+      },
+      "remove": []
+    },
+    {
+      "id": "scope-soul-not-equal-approval",
+      "schemaValid": true,
+      "codecValid": false,
+      "patch": {
+        "soul_id": "soul_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "remove": []
+    },
+    {
+      "id": "scope-occurred-at-not-equal-approval",
+      "schemaValid": true,
+      "codecValid": false,
+      "patch": {
+        "occurred_at": "2026-07-14T00:00:01Z"
+      },
+      "remove": []
+    },
+    {
+      "id": "scope-trace-pattern-mismatch",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {
+        "trace_id": "trace_5555"
+      },
+      "remove": []
+    },
+    {
+      "id": "scope-idempotency-key-missing",
+      "schemaValid": false,
+      "codecValid": false,
+      "patch": {},
+      "remove": [
+        "idempotency_key"
+      ]
+    }
+  ]
+}

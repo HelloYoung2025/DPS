@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### P06 S2 Host shadow chain
+
+- Control Plane Host 0.6.0 relays the exact Planner `action.proposal/v2` bytes to Policy with the producer preserved, produces a signed SHADOW `approval.evaluation.request/v1` bound to the v2 commitment, and accepts only a Policy `approval.readback/v1` that binds that request. Host src references contract packs only; the implementations are wired solely in the test-only entry process `PolicyShadowChainProcess`. The chain defaults to closed under `kill_control_plane_ingest`.
+- Policy Approval 0.8.0 adds `approval.readback/v1`, projected from persisted columns only. No migration is added. Planner changes its communication edge only; its code and version are unchanged.
+- There is no production request or promotion signer and no startup route. This change does not award a verification level, finish P06, or authorize release or activation.
+
 ### P06 S1 Policy v2 shadow evaluation
 
 - Policy Approval 0.7.0 consumes `action.proposal/v2` through the Planner owner codec and quarantines v1 at entry, reader, duplicate receipt, fence, and a migration-005 database trigger on submission attempts; unknown majors fail closed.

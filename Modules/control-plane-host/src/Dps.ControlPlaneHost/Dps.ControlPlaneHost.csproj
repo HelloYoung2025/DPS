@@ -10,6 +10,7 @@
     <PackageReference Include="Npgsql" />
     <ProjectReference Include="../../contracts/Dps.ControlPlaneHost.Contracts/Dps.ControlPlaneHost.Contracts.csproj" />
     <ProjectReference Include="../../../policy-approval/contracts/provided/Dps.PolicyApproval.Contracts/Dps.PolicyApproval.Contracts.csproj" />
+    <ProjectReference Include="../../../planner/contracts/provided/Dps.Planner.Contracts/Dps.Planner.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Dps.ControlPlaneHost.Tests" />

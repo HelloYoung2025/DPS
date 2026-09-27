@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><AssemblyName>Dps.PolicyApproval</AssemblyName><RootNamespace>Dps.PolicyApproval</RootNamespace><PackageId>Dps.PolicyApproval</PackageId><Version>0.7.0</Version></PropertyGroup>
+  <PropertyGroup><AssemblyName>Dps.PolicyApproval</AssemblyName><RootNamespace>Dps.PolicyApproval</RootNamespace><PackageId>Dps.PolicyApproval</PackageId><Version>0.8.0</Version></PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Dps.PolicyApproval.Tests" />
     <PackageReference Include="Npgsql" />

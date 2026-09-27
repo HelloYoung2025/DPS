@@ -67,7 +67,7 @@
     "inbound": [],
     "outbound": [
       {
-        "peerModule": "policy-approval",
+        "peerModule": "control-plane-host",
         "contractId": "action.proposal",
         "major": 2,
         "direction": "outbound",
@@ -75,7 +75,7 @@
         "timeoutMs": 2000,
         "retryPolicy": "none-shadow-recompute-is-deterministic",
         "idempotencyKey": "soul_id:device_binding_id:platform_account_id:idempotency_key",
-        "authScope": "module:policy-approval",
+        "authScope": "module:control-plane-host",
         "failureMode": "fail-closed-no-proposal"
       }
     ]

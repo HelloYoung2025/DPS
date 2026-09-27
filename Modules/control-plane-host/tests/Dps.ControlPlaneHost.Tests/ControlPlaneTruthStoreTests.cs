@@ -579,8 +579,11 @@ public sealed class ControlPlaneTruthStoreTests
         Assert.Contains("\"schema_version\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"SchemaVersion\"", json, StringComparison.Ordinal);
         Assert.Equal(promotion, ActionExecutionPromotionV1Codec.Deserialize(payload));
+        var proposal = PlannerProposal();
+        Assert.Equal(proposal.ProposalId, promotion.ProposalId);
+        Assert.Equal(Dps.Planner.Contracts.ActionProposalV2Canonical.ComputeSha256(proposal), promotion.ProposalSha256);
         Assert.Equal(
-            "60436dfad7c0d18615afc7ff4fff90ba3ef01414742e8100275a6bb21b8b9579",
+            "a20142372881905a79807625cb076220ad74469c67dc7934b106b856867dcc29",
             ActionExecutionPromotionV1Canonical.ComputeSignedSha256(promotion));
         Assert.Equal(736, ActionExecutionPromotionV1Canonical.CanonicalBytes(promotion).Length);
         Assert.NotEqual(
@@ -681,6 +684,22 @@ public sealed class ControlPlaneTruthStoreTests
             new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2099, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
+    // The Host is the promotion wire producer; since P06 every promotion binds the
+    // v2 commitment (dps.planner.action-proposal-sha256/v2) of a Planner v2 proposal,
+    // built here from the Planner contract pack exactly as the Planner builds it.
+    internal static Dps.Planner.Contracts.ActionProposalV2 PlannerProposal()
+        => ExpectedProposal(Soul, Binding, Account, Trace, Idempotency, Now);
+
+    /// <summary>The v2 proposal the Planner builds for these inputs, from the Planner contract pack.</summary>
+    internal static Dps.Planner.Contracts.ActionProposalV2 ExpectedProposal(
+        string soulId, string device, string account, string traceId, string idempotencyKey, DateTimeOffset occurredAt)
+        => new Dps.Planner.Contracts.ActionProposalV2(
+            Dps.Planner.Contracts.ActionProposalV2.CurrentSchemaVersion, Dps.Planner.Contracts.ActionProposalV2.CurrentContractId, Dps.Planner.Contracts.ActionProposalV2.CurrentProducerModule,
+            Dps.Planner.Contracts.ActionProposalIdentity.Create(soulId, device, account, idempotencyKey),
+            soulId, device, account, traceId, idempotencyKey, occurredAt, "internal", "observe",
+            Dps.Planner.Contracts.ActionProposalRules.IsSideEffect("observe"), true, new Dictionary<string, string>(),
+            ["evidence_" + new string('e', 64)]).CreateImmutableSnapshot();
+
     private static ActionExecutionPromotionV1 Promotion()
         => new(
             ActionExecutionPromotionV1.CurrentSchemaVersion,
@@ -688,14 +707,14 @@ public sealed class ControlPlaneTruthStoreTests
             ActionExecutionPromotionV1.CurrentProducerModule,
             ActionExecutionPromotionV1.CurrentAuthScope,
             Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-            Guid.Parse("22222222-2222-4222-8222-222222222222"),
+            PlannerProposal().ProposalId,
             Guid.Parse("33333333-3333-4333-8333-333333333333"),
             Soul,
             Binding,
             Account,
             Trace,
             Idempotency,
-            new string('a', 64),
+            Dps.Planner.Contracts.ActionProposalV2Canonical.ComputeSha256(PlannerProposal()),
             ActiveReleaseBom,
             7,
             Now,

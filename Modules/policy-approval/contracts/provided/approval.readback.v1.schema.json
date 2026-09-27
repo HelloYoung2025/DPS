@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dps.local/contracts/approval.readback.v1.schema.json",
+  "title": "approval.readback/v1",
+  "description": "Unsigned public projection of one authoritative Policy Approval snapshot, produced only by Policy Approval's exact reader. It embeds the exact approval.decision/v1 payload; approval_sha256 is the existing approval snapshot commitment (domain dps.operation-compiler.approval-snapshot-sha256/v1) recomputed by consumers from approval. It binds proposal_sha256 and proposal_contract_major (2 is the v2 commitment under dps.planner.action-proposal-sha256/v2) and the persisted approval.evaluation.request/v1 signature: required for major 2, null for historical major 1. A major 1 readback can never be an ACTIVE non-shadow APPROVED decision. The readback commitment domain is dps.policy-approval.approval-readback/v1. The top-level soul_id, device_binding_id, platform_account_id, trace_id, idempotency_key and occurred_at repeat the persisted scope of the same approval row and must equal the embedded approval fields. Readback is never execution authority by itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "producer_module",
+    "soul_id",
+    "device_binding_id",
+    "platform_account_id",
+    "trace_id",
+    "idempotency_key",
+    "occurred_at",
+    "approval",
+    "approval_sha256",
+    "proposal_sha256",
+    "proposal_contract_major",
+    "request_signature",
+    "status",
+    "status_revision",
+    "valid_until",
+    "runtime_revision",
+    "runtime_state_sha256",
+    "release_bom_sha256",
+    "privacy_class"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "contract_id": {
+      "const": "approval.readback/v1"
+    },
+    "producer_module": {
+      "const": "policy-approval"
+    },
+    "soul_id": {
+      "type": "string",
+      "pattern": "^soul_[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "device_binding_id": {
+      "type": "string",
+      "pattern": "^db_[a-f0-9]{32}$(?![\\s\\S])"
+    },
+    "platform_account_id": {
+      "type": "string",
+      "pattern": "^pa_[a-f0-9]{32}$(?![\\s\\S])"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^trace_[a-f0-9]{32}$(?![\\s\\S])"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^idem_[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?!0000-)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{0,6}[1-9])?Z$(?![\\s\\S])"
+    },
+    "approval": {
+      "$ref": "https://dps.local/contracts/approval.decision.v1.schema.json"
+    },
+    "approval_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "proposal_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "proposal_contract_major": {
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "request_signature": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 88,
+          "maxLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{85}[AQgw]==$(?![\\s\\S])"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "REVOKED"
+      ]
+    },
+    "status_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?!0000-)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{0,6}[1-9])?Z$(?![\\s\\S])"
+    },
+    "runtime_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "runtime_state_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "release_bom_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$(?![\\s\\S])"
+    },
+    "privacy_class": {
+      "const": "internal"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "proposal_contract_major": {
+            "const": 2
+          }
+        },
+        "required": [
+          "proposal_contract_major"
+        ]
+      },
+      "then": {
+        "properties": {
+          "request_signature": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "proposal_contract_major": {
+            "const": 1
+          }
+        },
+        "required": [
+          "proposal_contract_major"
+        ]
+      },
+      "then": {
+        "properties": {
+          "request_signature": {
+            "type": "null"
+          }
+        },
+        "not": {
+          "properties": {
+            "status": {
+              "const": "ACTIVE"
+            },
+            "approval": {
+              "properties": {
+                "decision": {
+                  "const": "APPROVED"
+                },
+                "shadow_only": {
+                  "const": false
+                }
+              },
+              "required": [
+                "decision",
+                "shadow_only"
+              ]
+            }
+          },
+          "required": [
+            "status",
+            "approval"
+          ]
+        }
+      }
+    }
+  ]
+}

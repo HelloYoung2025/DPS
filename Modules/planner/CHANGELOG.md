@@ -1,5 +1,9 @@
 # Planner changelog
 
+## Unreleased
+
+- Status only (no code or version change): the outbound `action.proposal/v2` edge peers `control-plane-host`, which relays the exact bytes to Policy Approval with the producer preserved (P06 S2, SHADOW only).
+
 ## 0.2.0 - Proposed
 
 - Add `action.proposal/v2` with exact typed SHA-256 selector, value, and evidence references; prompt tokens without spaces, Unicode/confusables, PII, wrong type prefixes, and non-canonical digests now fail structurally without keyword matching.

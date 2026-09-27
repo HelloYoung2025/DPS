@@ -391,6 +391,109 @@ public sealed class PolicyCanonicalTests
         Assert.Throws<ArgumentException>(() => ApprovalEvaluationRequestV1Codec.Deserialize(duplicate));
     }
 
+    private static readonly IReadOnlySet<string> ReadbackCorpusCaseIds =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "valid-v2-shadow",
+            "valid-v2-approved",
+            "valid-v1-historical-denied",
+            "valid-v1-approved-revoked",
+            "v1-active-executable-approval",
+            "v1-with-signature",
+            "v2-without-signature",
+            "unknown-major",
+            "zero-major",
+            "unknown-status",
+            "zero-status-revision",
+            "zero-runtime-revision",
+            "offset-not-zulu",
+            "digest-uppercase",
+            "digest-short",
+            "trailing-newline-digest",
+            "malformed-signature",
+            "wrong-contract-id",
+            "wrong-producer",
+            "wrong-privacy-class",
+            "additional-field",
+            "missing-field",
+            "nested-approval-additional-field",
+            "approval-not-object",
+            "scope-soul-not-equal-approval",
+            "scope-occurred-at-not-equal-approval",
+            "scope-trace-pattern-mismatch",
+            "scope-idempotency-key-missing"
+        };
+
+    [Fact, Trait("Category", "Contract")]
+    public void ReadbackContractIsVersionedStrictAndCannotRepresentExecutableV1()
+    {
+        AssertCodecCorpus(
+            "Dps.PolicyApproval.Contracts.approval.readback.v1.corpus.json",
+            ReadbackCorpusCaseIds,
+            payload => ApprovalReadbackV1Codec.Deserialize(payload));
+        using (var schema = typeof(ApprovalDecisionV1).Assembly.GetManifestResourceStream(
+                   "Dps.PolicyApproval.Contracts.approval.readback.v1.schema.json"))
+            Assert.NotNull(schema);
+        Assert.Equal("dps.policy-approval.approval-readback/v1", ApprovalReadbackV1Canonical.Domain);
+
+        var signature = Convert.ToBase64String(new byte[64]);
+        var shadow = new ApprovalReadbackV1(
+            ApprovalReadbackV1.CurrentSchemaVersion,
+            ApprovalReadbackV1.CurrentContractId,
+            ApprovalReadbackV1.CurrentProducerModule,
+            Decision("observe", false, []).SoulId,
+            Decision("observe", false, []).DeviceBindingId,
+            Decision("observe", false, []).PlatformAccountId,
+            Decision("observe", false, []).TraceId,
+            Decision("observe", false, []).IdempotencyKey,
+            Decision("observe", false, []).OccurredAt,
+            Decision("observe", false, []),
+            new string('a', 64),
+            new string('c', 64),
+            2,
+            signature,
+            ApprovalReadbackV1.Active,
+            1,
+            Decision("observe", false, []).OccurredAt.AddMinutes(2),
+            1,
+            new string('d', 64),
+            new string('b', 64),
+            "internal");
+        var wire = ApprovalReadbackV1Codec.Serialize(shadow);
+        Assert.Equal(wire, ApprovalReadbackV1Codec.Serialize(ApprovalReadbackV1Codec.Deserialize(wire)));
+        Assert.NotEqual(
+            ApprovalReadbackV1Canonical.ComputeSha256(shadow),
+            ApprovalReadbackV1Canonical.ComputeSha256(shadow with { ProposalSha256 = new string('e', 64) }));
+        var json = Encoding.UTF8.GetString(wire);
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Deserialize(Encoding.UTF8.GetBytes(json.Replace(
+            "\"schema_version\":\"1.0.0\",", "\"schema_version\":\"1.0.0\",\"schema_version\":\"1.0.0\",", StringComparison.Ordinal))));
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Deserialize(Encoding.UTF8.GetBytes(" " + json)));
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Deserialize(
+            new byte[ApprovalReadbackV1Codec.MaximumPayloadBytes + 1]));
+
+        // Every executable v1 shape is unrepresentable; unsigned v2 is refused.
+        var executableV1 = shadow with
+        {
+            Approval = Decision("observe", false, []) with
+            {
+                Decision = ApprovalDecisionV1.Approved,
+                ShadowOnly = false,
+                PlatformAuthorizationId = "platform-auth-fixture-1",
+                DenialReasons = []
+            },
+            ProposalContractMajor = 1,
+            RequestSignature = null
+        };
+        Assert.Throws<NotSupportedException>(() => ApprovalReadbackV1Codec.Serialize(executableV1));
+        ApprovalReadbackV1Codec.Serialize(executableV1 with { Status = ApprovalReadbackV1.Revoked });
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Serialize(shadow with { RequestSignature = null }));
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Serialize(shadow with { ProposalContractMajor = 1 }));
+        Assert.Throws<NotSupportedException>(() => ApprovalReadbackV1Codec.Serialize(shadow with { ProposalContractMajor = 3 }));
+        // The top-level scope must equal the embedded approval scope.
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Serialize(shadow with { TraceId = "trace_" + new string('9', 32) }));
+        Assert.Throws<ArgumentException>(() => ApprovalReadbackV1Codec.Serialize(shadow with { OccurredAt = shadow.OccurredAt.AddSeconds(1) }));
+    }
+
     [Fact, Trait("Category", "Contract")]
     public void OwnedContractCorporaMatchStrictCodecsAndLockedCaseIds()
     {

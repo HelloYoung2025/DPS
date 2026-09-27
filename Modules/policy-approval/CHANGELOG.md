@@ -1,5 +1,10 @@
 # Policy Approval changelog
 
+## 0.8.0 - Proposed
+
+- Add the Policy-owned `approval.readback/v1` contract: a strict DTO/codec, a Draft 2020-12 schema that references `approval.decision/v1` by `$id`, a locked 28-case corpus, and the domain `dps.policy-approval.approval-readback/v1`. The exact reader projects it through `PolicyApprovalAuthoritativeSnapshot.ToReadbackV1()`. `request_signature` comes only from the persisted migration-005 column: required for major 2, null for major 1. The top-level scope fields repeat the persisted row scope and must equal the embedded decision. No migration, grant or table was added.
+- Declare the outbound readback edge to `control-plane-host`. The inbound `action.proposal/v2` edge now peers `control-plane-host`, which relays with the producer preserved, under scope `module:control-plane-host`.
+
 ## 0.7.0 - Proposed
 
 - Consume `action.proposal/v2` only, through the Planner owner codec and its `dps.planner.action-proposal-sha256/v2` commitment. One entry gate dispatches by contract major before authentication or any database access: `action.proposal/v1` returns a bounded hash-only `PolicyProposalQuarantinedException` proof and writes nothing; unknown majors fail closed.

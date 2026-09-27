@@ -341,13 +341,13 @@ Modules/<module-id>/
 | `gbrain-projector` | 0.2.0 | R2 | Source binding + projection v2 | DTO only，不联网 |
 | `soul-memory-adapter` | 0.2.0 | R3 | GBrain OAuth/MCP 隔离 | 仍消费 v1，阻断 |
 | `planner` | 0.2.0 | R3 | Shadow 动作提案 | v2 producer |
-| `policy-approval` | 0.7.0 | R3 | Policy、批准、promotion/fence | 消费 planner v2（影子评估），v1 仅隔离；Host 尚未生产评估请求 |
+| `policy-approval` | 0.8.0 | R3 | Policy、批准、promotion/fence | 经 Host 中继消费 planner v2（影子评估），v1 仅隔离；提供 `approval.readback/v1` |
 | `operation-compiler` | 0.3.0 | R3 | 批准动作编译为 typed steps | proposed |
 | `command-orchestrator` | 0.2.0 | R3 | 幂等、lease、重试与恢复 | proposed |
 | `executor-gateway` | 0.1.0 | R3 | native + postcondition 真相 | 需 Windows/Zenno/ADB |
 | `audit-metrics` | 0.1.0 | R3 | 审计和低基数指标 | proposed |
 | `evidence-service` | 0.1.0 | R3 | 证据包组合 | GBrain v1/v2 待对齐 |
-| `control-plane-host` | 0.5.1 | R3 | 产品组合根 | proposed |
+| `control-plane-host` | 0.6.0 | R3 | 产品组合根 | proposed；P06 影子链仅测试入口进程可达 |
 
 ### 6.4 Windows Edge、Zenno 和 Legacy
 
@@ -440,7 +440,7 @@ Modules/<module-id>/
 
 当前治理仍失败，不能生成可发布 BOM。主要红项：
 
-- Planner 生产 v2，Policy 已消费 v2 做影子评估、v1 仅隔离；Control Plane Host 尚未生产 `approval.evaluation.request/v1`，全链未闭合。
+- Planner 生产 v2，经 Control Plane Host 保留生产者中继给 Policy 做影子评估，v1 仅隔离；Host 生产签名的 SHADOW `approval.evaluation.request/v1` 并只接受绑定该请求的 `approval.readback/v1`。该链仅在测试入口进程中组合、默认关闭，没有生产签名器，也未激活。
 - GBrain Projector 生产 v2，SoulMemory/Evidence 仍有 v1。
 - Factory Intake/Resolver 已 v2，Impact/Worktree/Runner/Host 仍有 v1。
 - Release Controller 已 rollout v2，Rollback/Host 仍有 v1。
@@ -865,7 +865,7 @@ git status --short --branch
 ### 15.4 高优先级技术阻断
 
 1. GBrain Projector v2 与 SoulMemory Adapter/Evidence v1 不兼容。
-2. Planner v2 → Policy 全链未闭合：Policy 已消费 v2（影子评估，v1 仅隔离），Control Plane Host 尚未生产评估请求。
+2. Planner v2 → Host → Policy 影子链只在测试入口进程中闭合：没有生产请求或 promotion 签名器，没有启动路由，也未激活；`soul.resolved` 的身份绑定需要 soul-registry 提供互惠边，不在本次范围内。
 3. Factory Intake/Resolver/Release v2 与下游 v1 断层。
 4. DAG/compatibility 快照过期，通信和 owner 校验失败。
 5. Persona→GBrain 写链、spoken 事件、Interest Postgres store 未闭合。

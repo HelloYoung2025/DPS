@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>Dps.ControlPlaneHost.PolicyShadowChainFixture</AssemblyName><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Dps.ControlPlaneHost/Dps.ControlPlaneHost.csproj" />
+    <!-- Test-only: the only project allowed to wire the Planner and Policy implementations. -->
+    <ProjectReference Include="../../../planner/src/Dps.Planner/Dps.Planner.csproj" />
+    <ProjectReference Include="../../../policy-approval/src/Dps.PolicyApproval/Dps.PolicyApproval.csproj" />
+  </ItemGroup>
+</Project>
