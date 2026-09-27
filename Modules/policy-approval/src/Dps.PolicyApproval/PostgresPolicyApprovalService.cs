@@ -70,7 +70,10 @@ public sealed class PolicyApprovalAuthoritativeSnapshot
         DateTimeOffset validUntil,
         long runtimeRevision,
         string runtimeStateSha256,
-        string releaseBomSha256)
+        string releaseBomSha256,
+        string proposalSha256,
+        int proposalContractMajor,
+        string? requestSignature)
     {
         Approval = PolicyCanonicalization.SnapshotDecision(approval);
         PolicyCanonicalization.RequireSha256(canonicalSha256, nameof(canonicalSha256));
@@ -84,6 +87,27 @@ public sealed class PolicyApprovalAuthoritativeSnapshot
         if (runtimeRevision <= 0) throw new UnauthorizedAccessException("Approval runtime revision must be positive.");
         PolicyCanonicalization.RequireSha256(runtimeStateSha256, nameof(runtimeStateSha256));
         PolicyCanonicalization.RequireSha256(releaseBomSha256, nameof(releaseBomSha256));
+        PolicyCanonicalization.RequireSha256(proposalSha256, nameof(proposalSha256));
+        if (proposalContractMajor is not (1 or 2))
+            throw new UnauthorizedAccessException("Unknown action.proposal contract major fails closed.");
+        // The one shared v1 isolation guard for every snapshot: public reader, duplicate
+        // receipt branch, fence acquire/revalidate/begin, and revocation readback.
+        // Historical DENIED, shadow-only, or REVOKED v1 rows remain readable.
+        if (proposalContractMajor == 1
+            && Approval.Decision == ApprovalDecisionV1.Approved
+            && !Approval.ShadowOnly
+            && status == Active)
+            throw new UnauthorizedAccessException("An action.proposal/v1 approval is quarantine-only and never readable as executable.");
+        // Migration 005 persists the evaluation-request signature for every v2
+        // decision and never for historical v1 rows; anything else is drift.
+        if (proposalContractMajor == 2)
+        {
+            if (requestSignature is null)
+                throw new UnauthorizedAccessException("A v2 approval snapshot must carry its persisted request signature.");
+            Dps.PolicyApproval.Contracts.ApprovalContractGuard.RequireP256P1363Signature(requestSignature, nameof(requestSignature));
+        }
+        else if (requestSignature is not null)
+            throw new UnauthorizedAccessException("A historical v1 approval snapshot carries no request signature.");
         CanonicalSha256 = canonicalSha256;
         Status = status;
         StatusRevision = statusRevision;
@@ -91,6 +115,9 @@ public sealed class PolicyApprovalAuthoritativeSnapshot
         RuntimeRevision = runtimeRevision;
         RuntimeStateSha256 = runtimeStateSha256;
         ReleaseBomSha256 = releaseBomSha256;
+        ProposalSha256 = proposalSha256;
+        ProposalContractMajor = proposalContractMajor;
+        RequestSignature = requestSignature;
     }
 
     public const string Active = "ACTIVE";
@@ -103,6 +130,44 @@ public sealed class PolicyApprovalAuthoritativeSnapshot
     public long RuntimeRevision { get; }
     public string RuntimeStateSha256 { get; }
     public string ReleaseBomSha256 { get; }
+    public string ProposalSha256 { get; }
+    public int ProposalContractMajor { get; }
+    public string? RequestSignature { get; }
+
+    /// <summary>
+    /// Projects this authoritative snapshot onto the public, versioned
+    /// <c>approval.readback/v1</c> contract; the codec re-checks every invariant.
+    /// </summary>
+    public ApprovalReadbackV1 ToReadbackV1()
+    {
+        var readback = new ApprovalReadbackV1(
+            ApprovalReadbackV1.CurrentSchemaVersion,
+            ApprovalReadbackV1.CurrentContractId,
+            ApprovalReadbackV1.CurrentProducerModule,
+            // Scope comes only from the persisted row: decision_json, whose five text
+            // ids the reader matched against their own columns and whose occurred_at
+            // migration 001 CHECK-binds to approval_decisions.occurred_at.
+            Approval.SoulId,
+            Approval.DeviceBindingId,
+            Approval.PlatformAccountId,
+            Approval.TraceId,
+            Approval.IdempotencyKey,
+            Approval.OccurredAt,
+            Approval,
+            CanonicalSha256,
+            ProposalSha256,
+            ProposalContractMajor,
+            RequestSignature,
+            Status,
+            StatusRevision,
+            ValidUntil,
+            RuntimeRevision,
+            RuntimeStateSha256,
+            ReleaseBomSha256,
+            "internal");
+        readback.Validate();
+        return readback;
+    }
 
     private static bool FixedDigestEquals(string left, string right)
     {
@@ -313,7 +378,8 @@ public sealed class PolicyApprovalAuthoritativeClient
             SELECT decision_json::text, decision_sha256, current_status.status,
                    current_status.revision, decision.valid_until,
                    decision.runtime_revision, decision.runtime_state_sha256,
-                   decision.release_bom_sha256
+                   decision.release_bom_sha256, decision.proposal_sha256,
+                   decision.proposal_contract_major, decision.request_signature
             FROM {_options.SchemaName}.approval_decisions AS decision
             JOIN LATERAL
             (
@@ -377,7 +443,10 @@ public sealed class PolicyApprovalAuthoritativeClient
             reader.GetFieldValue<DateTimeOffset>(4).ToUniversalTime(),
             reader.GetInt64(5),
             reader.GetString(6),
-            reader.GetString(7));
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetInt16(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10));
         if (snapshot.Approval.ApprovalId != request.ApprovalId
             || snapshot.Approval.ProposalId != request.ProposalId
             || !string.Equals(snapshot.Approval.SoulId, request.SoulId, StringComparison.Ordinal)
@@ -500,15 +569,26 @@ public sealed class PostgresPolicyApprovalService : IDisposable
         }
     }
 
-    public async Task<PolicyApprovalAppendResult> EvaluateAndAppendAsync(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
+    /// <summary>
+    /// Evaluates one exact <c>action.proposal/v2</c> wire under one signed
+    /// <c>approval.evaluation.request/v1</c> wire. SHADOW always yields a DENIED
+    /// shadow-only decision; EXECUTE additionally needs the independently signed
+    /// promotion bound to the same v2 commitment. v1 wire is quarantined with a
+    /// hash-only proof and unknown majors fail closed, both before authentication
+    /// or any database access. Every request is authenticated before its
+    /// signature-free commitment is compared with the scoped idempotency receipt.
+    /// </summary>
+    public async Task<PolicyApprovalAppendResult> EvaluateAsync(
+        ReadOnlyMemory<byte> proposalWire,
+        ReadOnlyMemory<byte> requestWire,
+        ActionExecutionPromotionV1? promotion = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
-        proposal = PolicyCanonicalization.SnapshotProposal(proposal);
-        var proposalSha256 = PolicyAuthorizationBinding.ComputeProposalSha256(proposal);
-        var commandSha256 = ComputeDecisionRequestSha256(proposal, envelope, proposalSha256);
+        var proposal = PolicyProposalMajorGate.Admit(proposalWire.Span);
+        var request = ApprovalEvaluationRequestV1Codec.Deserialize(requestWire.Span);
+        string commandSha256;
+        using (var verifier = new PolicyEvaluationRequestVerifier(_evaluationPublicKey, _promotionPublicKey))
+            commandSha256 = verifier.Verify(proposal, request, promotion);
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -544,6 +624,16 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             return new PolicyApprovalAppendResult(PolicyApprovalAppendDisposition.DuplicateNoOp, duplicate);
         }
 
+        // A new request must be unexpired by PostgreSQL time before its first write;
+        // otherwise the transaction rolls back with zero rows.
+        await EnsureStillValidAsync(
+            connection,
+            transaction,
+            request.ValidUntil,
+            request.ValidUntil,
+            "Policy evaluation request",
+            cancellationToken);
+
         // Policy-state INSERT uses the same database advisory lock via a migration trigger.
         // This closes the kill-switch/rate/authorization race between trusted read and commit.
         await AcquireLockAsync(
@@ -557,7 +647,7 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             _promotionPublicKey,
             stateSource);
         var evaluator = new DeterministicPolicyEvaluator(trustProvider);
-        var evaluation = await evaluator.EvaluateVerifiedAsync(proposal, envelope, cancellationToken);
+        var evaluation = await evaluator.EvaluateVerifiedAsync(proposal, request, promotion, cancellationToken);
         var decision = evaluation.Decision;
         var decisionSha256 = PolicyApprovalDecisionCanonical.ComputeSha256(decision);
         var decisionPayload = ApprovalDecisionV1Codec.Serialize(decision);
@@ -574,8 +664,8 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             ? evaluation.Context.AuthorizationValidUntil
             : evaluation.Context.RuntimeValidUntil;
         await InsertDecisionAsync(
-            connection, transaction, decision, proposalSha256, decisionSha256,
-            commandSha256, evaluation.Context.TrustEvidenceSha256,
+            connection, transaction, decision, request.ProposalSha256, decisionSha256,
+            commandSha256, request.SignatureBase64, evaluation.Context.TrustEvidenceSha256,
             evaluation.Context.RuntimeRevision, evaluation.Context.RuntimeStateSha256,
             evaluation.Context.ReleaseBomSha256, approvalValidUntil, decisionJson, cancellationToken);
         await InjectAsync(PolicyApprovalMutationStage.DecisionWritten, cancellationToken);
@@ -624,6 +714,16 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             decisionJson, cancellationToken);
         await InjectAsync(PolicyApprovalMutationStage.OutboxWritten, cancellationToken);
         await InjectAsync(PolicyApprovalMutationStage.BeforeCommit, cancellationToken);
+        // Return what PostgreSQL stored (timestamptz keeps microseconds), exactly as the
+        // duplicate branch and the exact reader do, so the first return equals every later read.
+        var inserted = await ReadSnapshotAsync(
+            connection,
+            transaction,
+            new PolicyApprovalReadRequest(
+                decision.ApprovalId, decision.ProposalId, decision.SoulId,
+                decision.DeviceBindingId, decision.PlatformAccountId, decision.TraceId,
+                decision.IdempotencyKey, decisionSha256),
+            cancellationToken);
         await EnsureStillValidAsync(
             connection,
             transaction,
@@ -632,17 +732,7 @@ public sealed class PostgresPolicyApprovalService : IDisposable
             "Policy evaluation",
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new PolicyApprovalAppendResult(
-            PolicyApprovalAppendDisposition.Inserted,
-            new PolicyApprovalAuthoritativeSnapshot(
-                decision,
-                decisionSha256,
-                PolicyApprovalAuthoritativeSnapshot.Active,
-                1,
-                approvalValidUntil,
-                evaluation.Context.RuntimeRevision,
-                evaluation.Context.RuntimeStateSha256,
-                evaluation.Context.ReleaseBomSha256));
+        return new PolicyApprovalAppendResult(PolicyApprovalAppendDisposition.Inserted, inserted);
     }
 
     public async Task<PolicyApprovalAppendResult> RevokeAsync(
@@ -807,46 +897,6 @@ public sealed class PostgresPolicyApprovalService : IDisposable
         return PolicyApprovalAuthoritativeClient.Materialize(reader, request);
     }
 
-    private static string ComputeDecisionRequestSha256(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
-        string proposalSha256)
-    {
-        if (!string.Equals(envelope.CallerModule, "control-plane-host", StringComparison.Ordinal)
-            || !string.Equals(envelope.AuthScope, "policy:evaluate", StringComparison.Ordinal)
-            || envelope.RequestedMode is not (PolicyEvaluationEnvelope.Shadow or PolicyEvaluationEnvelope.Execute))
-            throw new UnauthorizedAccessException("Unknown policy evaluation caller, scope, or mode fails closed.");
-        Dps.PolicyApproval.Contracts.ApprovalContractGuard.RequireUtc(envelope.ValidUntil, nameof(envelope.ValidUntil));
-        PolicyCanonicalization.RequireSha256(envelope.ProposalSha256, nameof(envelope.ProposalSha256));
-        PolicyCanonicalization.RequireSha256(envelope.ReleaseBomSha256, nameof(envelope.ReleaseBomSha256));
-        var signature = PolicyEcdsaGuard.DecodeCanonicalP1363Signature(envelope.SignatureBase64);
-        try
-        {
-            return PolicyCanonicalHash.Compute(writer =>
-            {
-                writer.Field("dps.policy-approval.decision-command-sha256/v1");
-                writer.Field(proposal.SoulId);
-                writer.Field(proposal.DeviceBindingId);
-                writer.Field(proposal.PlatformAccountId);
-                writer.Field(proposal.IdempotencyKey);
-                writer.Field(proposalSha256);
-                writer.Field(envelope.CallerModule);
-                writer.Field(envelope.AuthScope);
-                writer.Field(envelope.ProposalId);
-                writer.Field(envelope.ProposalSha256);
-                writer.Field(envelope.ReleaseBomSha256);
-                writer.Field(envelope.ValidUntil);
-                writer.Field(envelope.RequestedMode);
-                writer.NullableField(
-                    envelope.ExecutionPromotion is null
-                        ? null
-                        : ActionExecutionPromotionV1Canonical.ComputeSignedSha256(envelope.ExecutionPromotion));
-                writer.Field(envelope.SignatureBase64);
-            });
-        }
-        finally { CryptographicOperations.ZeroMemory(signature); }
-    }
-
     private static string ComputeRevocationRequestSha256(
         PolicyApprovalRevocationRequest request,
         PolicyApprovalRevocationEnvelope envelope)
@@ -883,6 +933,7 @@ public sealed class PostgresPolicyApprovalService : IDisposable
         string proposalSha256,
         string decisionSha256,
         string commandSha256,
+        string requestSignature,
         string trustEvidenceSha256,
         long runtimeRevision,
         string runtimeStateSha256,
@@ -898,13 +949,13 @@ public sealed class PostgresPolicyApprovalService : IDisposable
              trace_id, idempotency_key, occurred_at, decision, proposal_sha256,
              decision_sha256, command_sha256, trust_evidence_sha256,
              runtime_revision, runtime_state_sha256, release_bom_sha256,
-             valid_until, decision_json)
+             valid_until, decision_json, proposal_contract_major, request_signature)
             VALUES
             (@approval_id, @proposal_id, @soul_id, @device_binding_id, @platform_account_id,
              @trace_id, @idempotency_key, @occurred_at, @decision, @proposal_sha256,
              @decision_sha256, @command_sha256, @trust_evidence_sha256,
              @runtime_revision, @runtime_state_sha256, @release_bom_sha256,
-             @valid_until, @decision_json)
+             @valid_until, @decision_json, 2, @request_signature)
             """,
             connection,
             transaction) { CommandTimeout = 5 };
@@ -924,6 +975,7 @@ public sealed class PostgresPolicyApprovalService : IDisposable
         command.Parameters.AddWithValue("proposal_sha256", proposalSha256);
         command.Parameters.AddWithValue("decision_sha256", decisionSha256);
         command.Parameters.AddWithValue("command_sha256", commandSha256);
+        command.Parameters.AddWithValue("request_signature", requestSignature);
         command.Parameters.AddWithValue("trust_evidence_sha256", trustEvidenceSha256);
         command.Parameters.AddWithValue("runtime_revision", runtimeRevision);
         command.Parameters.AddWithValue("runtime_state_sha256", runtimeStateSha256);

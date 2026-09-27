@@ -2,11 +2,27 @@
 
 ## [Unreleased] - 2026-09-14
 
+### U5 local integration: P06 S2 R2 into U4 M2
+- Merge the frozen P06 S2 R2 head `40e202e` (S′) into the frozen U4 integration head `ab0ef3c` (first parent). Only the frozen S′ line is merged; product behavior does not change; this does not authorize release or activation.
+
 ### U4 local integration: P10 R2 into U4 M1
 - Merge the frozen P10 REVIEW-FIX-R2 head `1536e38` into U4 M1 (first parent). Only frozen lines are merged; product behavior does not change; this does not authorize release or activation.
 
 ### U4 local integration: P05 R4 into U3
 - Merge the frozen P05 R4 evidence supplement `1f991fa` into the frozen U3 integration head `f91d1dc` (first parent). Only frozen lines are merged; product behavior does not change; this does not authorize release or activation.
+
+### P06 S2 Host shadow chain
+
+- Control Plane Host 0.6.0 relays the exact Planner `action.proposal/v2` bytes to Policy with the producer preserved, produces a signed SHADOW `approval.evaluation.request/v1` bound to the v2 commitment, and accepts only a Policy `approval.readback/v1` that binds that request. Host src references contract packs only; the implementations are wired solely in the test-only entry process `PolicyShadowChainProcess`. The chain defaults to closed under `kill_control_plane_ingest`.
+- Policy Approval 0.8.0 adds `approval.readback/v1`, projected from persisted columns only. No migration is added. Planner changes its communication edge only; its code and version are unchanged.
+- There is no production request or promotion signer and no startup route. This change does not award a verification level, finish P06, or authorize release or activation.
+- R2 rework: Policy Approval now returns the persisted snapshot for a newly inserted decision, so a proposal `occurred_at` with a seventh fractional digit no longer makes the first shadow-chain call fail after commit. Control Plane Host changes only tests and test documentation. Versions, contracts and migrations are unchanged; no verification level is awarded.
+
+### P06 S1 Policy v2 shadow evaluation
+
+- Policy Approval 0.7.0 consumes `action.proposal/v2` through the Planner owner codec and quarantines v1 at entry, reader, duplicate receipt, fence, and a migration-005 database trigger on submission attempts; unknown majors fail closed.
+- Add the policy-owned signed `approval.evaluation.request/v1`: a signature-free commitment makes re-signed replays return the original result, and `SHADOW` yields `DENIED`/`SHADOW_ONLY`. Only `EXECUTE` plus an independent promotion bound to the v2 commitment can approve, and nothing dispatches. The v1 typed evaluation API is removed.
+- Control Plane Host does not produce the request yet. This change does not award a verification level, finish P06, or authorize release or activation.
 
 ### P04 repair and P05 R3 local integration
 - Merge the frozen P05 R3 Soul-current line `5ab9aab` (first parent) with the frozen P04 repair integration `4d19d3f` as a local construction baseline. Product behavior does not change; both lines' unfinished acceptance, retained failures and null formal verification remain; release and activation are not authorized.

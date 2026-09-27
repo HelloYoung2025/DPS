@@ -1,5 +1,24 @@
 # Policy Approval changelog
 
+## 0.8.0 - Proposed
+
+- Add the Policy-owned `approval.readback/v1` contract: a strict DTO/codec, a Draft 2020-12 schema that references `approval.decision/v1` by `$id`, a locked 28-case corpus, and the domain `dps.policy-approval.approval-readback/v1`. The exact reader projects it through `PolicyApprovalAuthoritativeSnapshot.ToReadbackV1()`. `request_signature` comes only from the persisted migration-005 column: required for major 2, null for major 1. The top-level scope fields repeat the persisted row scope and must equal the embedded decision. No migration, grant or table was added.
+- Declare the outbound readback edge to `control-plane-host`. The inbound `action.proposal/v2` edge now peers `control-plane-host`, which relays with the producer preserved, under scope `module:control-plane-host`.
+- R2 (P06 S2 rework): for a newly inserted decision, `EvaluateAsync` now returns the snapshot read back from the persisted row in the same transaction before commit, through the same `ReadSnapshotAsync` path as the duplicate branch, instead of an in-memory copy. `valid_until` is therefore the stored `timestamptz` value: truncated to microseconds and never later than the evaluated bound. The first return now equals every later exact read and replay when `occurred_at` has a non-zero seventh fractional digit. PostgreSQL regressions cover `.1234567`, `.1234575` and `.9999995` (truncated, not rounded), plus an EXECUTE approval. No contract, migration, API or version change.
+
+## 0.7.0 - Proposed
+
+- Consume `action.proposal/v2` only, through the Planner owner codec and its `dps.planner.action-proposal-sha256/v2` commitment. One entry gate dispatches by contract major before authentication or any database access: `action.proposal/v1` returns a bounded hash-only `PolicyProposalQuarantinedException` proof and writes nothing; unknown majors fail closed.
+- Breaking public API: delete the v1 typed evaluation entry together with `PolicyEvaluationEnvelope` and `PolicyAuthorizationBinding`. `PostgresPolicyApprovalService.EvaluateAsync` now takes the proposal wire, the `approval.evaluation.request/v1` wire, and the optional promotion; `DeterministicPolicyEvaluator.EvaluateAsync` takes `ActionProposalV2`, the request, and the optional promotion.
+- Add policy-owned `approval.evaluation.request/v1` (wire producer `control-plane-host`, scope `policy:evaluate`) with a strict DTO/codec, Draft 2020-12 schema, locked corpus, and canonical domain `dps.policy-approval.approval-evaluation-request/v1`. It binds the proposal ID and v2 commitment, Soul/device/account/trace/idempotency, Release BOM, mode (`SHADOW`, or `EXECUTE` with the promotion hash), an `occurred_at` equal to the proposal's, and `valid_until = occurred_at + 120 s`, checked against PostgreSQL time at entry and before commit.
+- Verify the request signature first and store it in its own column; the idempotency command hash is the signature-free request commitment. An identical re-signed request replays the original result, a changed business field is a hash-only conflict, and an expired new request writes nothing.
+- A `SHADOW` request yields `DENIED`, `shadow_only`, `SHADOW_ONLY`. Only `EXECUTE` with a bound, independently signed `action.execution.promotion/v1` can yield a non-shadow `APPROVED`; neither path dispatches.
+- `proposal_sha256` in `action.execution.promotion/v1` and `approval.submission.intent/v1` is now always the v2 commitment, and v1 is never promoted. Schema bytes are unchanged.
+- Add expand migration `005_add_proposal_contract_major.sql`. Decision rows record `proposal_contract_major` (existing and pre-0.7.0 rows default to 1) and `request_signature`. A BEFORE INSERT trigger rejects submission attempts for non-v2 decisions from any caller with `42501`; its SECURITY INVOKER function has a fixed `search_path`, is revoked from `PUBLIC` and all four runtime roles, and no grant widens. Migration 004 stays unregistered.
+- One shared snapshot guard keeps an ACTIVE non-shadow v1 `APPROVED` unreadable at the reader, duplicate receipt branch, fence acquire/revalidate/begin, and revocation readback; DENIED, shadow, and REVOKED v1 history stays readable. The in-process snapshot adds `ProposalSha256` and `ProposalContractMajor`.
+- Move every former v1 → `APPROVED` positive test to v2 + promotion and assert v1 isolation at each exit, request binding, replay and conflict, expiry, migration 005 history and re-initialization, and the database trigger.
+- Require Planner `>=0.2.0 <1.0.0`. Control Plane Host does not produce the request yet.
+
 ## 0.6.0 - Proposed
 
 - Remove every Policy-local `native.stop.proof` and `native.stop.challenge` DTO, Schema, Corpus, NuGet Pack item, and EmbeddedResource. Executor Gateway remains the unique registered native-stop owner; Policy has no copied fallback contract source.

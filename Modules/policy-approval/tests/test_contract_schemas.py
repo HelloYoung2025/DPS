@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
 
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,11 @@ CONTRACTS = (
         "approval.execution.fence/v1",
         PROVIDED / "approval.execution.fence.v1.schema.json",
         PROVIDED / "approval.execution.fence.v1.corpus.json",
+    ),
+    (
+        "approval.evaluation.request/v1",
+        PROVIDED / "approval.evaluation.request.v1.schema.json",
+        PROVIDED / "approval.evaluation.request.v1.corpus.json",
     ),
     (
         "approval.submission.intent/v1",
@@ -51,6 +57,11 @@ CONTRACTS = (
         "approval.submission.state/v1",
         PROVIDED / "approval.submission.state.v1.schema.json",
         PROVIDED / "approval.submission.state.v1.corpus.json",
+    ),
+    (
+        "approval.readback/v1",
+        PROVIDED / "approval.readback.v1.schema.json",
+        PROVIDED / "approval.readback.v1.corpus.json",
     ),
 )
 
@@ -149,6 +160,40 @@ EXPECTED_CASE_IDS = {
             "release-long",
         }
     ),
+    "approval.evaluation.request/v1": frozenset(
+        {
+            "valid",
+            "valid-execute",
+            "valid-canonical-fraction",
+            "additional-field",
+            "legacy-envelope-requested-mode",
+            "missing-field",
+            "missing-promotion-field",
+            "unknown-mode",
+            "lowercase-mode",
+            "shadow-with-promotion",
+            "execute-without-promotion",
+            "empty-promotion-digest",
+            "promotion-digest-uppercase",
+            "uppercase-uuid",
+            "zero-uuid",
+            "offset-not-zulu",
+            "invalid-calendar-date",
+            "year-zero",
+            "fractional-trailing-zero",
+            "trailing-newline-id",
+            "trailing-newline-proposal-sha",
+            "digest-uppercase",
+            "digest-short",
+            "unknown-contract",
+            "wrong-producer",
+            "wrong-auth-scope",
+            "signature-null",
+            "noncanonical-base64-pad-bits",
+            "lifetime-over-120-seconds",
+            "lifetime-under-120-seconds",
+        }
+    ),
     "approval.submission.intent/v1": frozenset(
         {"valid", "unknown-field", "missing-attempt-id", "attempt-zero", "bom-generation-zero", "uppercase-request-hash"}
     ),
@@ -160,6 +205,38 @@ EXPECTED_CASE_IDS = {
     ),
     "approval.submission.recovery/v1": frozenset(
         {"valid", "wrong-next-attempt", "missing-human-approval", "wrong-role", "same-attempt-zero", "unknown-field"}
+    ),
+    "approval.readback/v1": frozenset(
+        {
+            "valid-v2-shadow",
+            "valid-v2-approved",
+            "valid-v1-historical-denied",
+            "valid-v1-approved-revoked",
+            "v1-active-executable-approval",
+            "v1-with-signature",
+            "v2-without-signature",
+            "unknown-major",
+            "zero-major",
+            "unknown-status",
+            "zero-status-revision",
+            "zero-runtime-revision",
+            "offset-not-zulu",
+            "digest-uppercase",
+            "digest-short",
+            "trailing-newline-digest",
+            "malformed-signature",
+            "wrong-contract-id",
+            "wrong-producer",
+            "wrong-privacy-class",
+            "additional-field",
+            "missing-field",
+            "nested-approval-additional-field",
+            "approval-not-object",
+            "scope-soul-not-equal-approval",
+            "scope-occurred-at-not-equal-approval",
+            "scope-trace-pattern-mismatch",
+            "scope-idempotency-key-missing",
+        }
     ),
     "approval.submission.state/v1": frozenset(
         {"valid-pending", "valid-acknowledged", "valid-unknown", "unknown-state", "pending-with-predecessor", "ack-without-predecessor", "unknown-field"}
@@ -191,7 +268,14 @@ def _load(path: Path) -> dict[str, object]:
 def _validator(schema_path: Path) -> Draft202012Validator:
     schema = _load(schema_path)
     Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema, format_checker=_format_checker())
+    # approval.readback/v1 embeds the owner approval.decision/v1 schema by $id.
+    registry = Registry().with_resources(
+        (owned["$id"], Resource.from_contents(owned))
+        for owned in (_load(path) for _, path, _ in CONTRACTS)
+    )
+    return Draft202012Validator(
+        schema, format_checker=_format_checker(), registry=registry
+    )
 
 
 def _apply_case(corpus: dict[str, object], case: dict[str, object]) -> dict[str, object]:
@@ -246,9 +330,15 @@ class PolicyApprovalProvidedSchemaTests(unittest.TestCase):
     def test_fence_shared_corpus(self) -> None:
         self._assert_corpus(CONTRACTS[2])
 
+    def test_evaluation_request_shared_corpus(self) -> None:
+        self._assert_corpus(CONTRACTS[3])
+
     def test_submission_lifecycle_shared_corpora(self) -> None:
-        for contract in CONTRACTS[3:]:
+        for contract in CONTRACTS[4:-1]:
             self._assert_corpus(contract)
+
+    def test_readback_shared_corpus(self) -> None:
+        self._assert_corpus(CONTRACTS[-1])
 
     def _assert_corpus(self, contract: tuple[str, Path, Path]) -> None:
         contract_id, schema_path, corpus_path = contract

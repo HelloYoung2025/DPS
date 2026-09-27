@@ -86,6 +86,11 @@
     },
     {
       "consumer": "control-plane-host",
+      "provider": "planner",
+      "reason": "real Planner output relayed unchanged as producer-preserved action.proposal/v2 in the non-production shadow chain"
+    },
+    {
+      "consumer": "control-plane-host",
       "provider": "platform-account-registry",
       "reason": "signed canonical account authorization truth with alias key epoch"
     },

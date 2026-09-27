@@ -4,21 +4,6 @@ using Dps.PolicyApproval.Contracts;
 
 namespace Dps.PolicyApproval;
 
-public sealed record PolicyEvaluationEnvelope(
-    string CallerModule,
-    string AuthScope,
-    Guid ProposalId,
-    string ProposalSha256,
-    string ReleaseBomSha256,
-    DateTimeOffset ValidUntil,
-    string SignatureBase64,
-    string RequestedMode = PolicyEvaluationEnvelope.Shadow,
-    ActionExecutionPromotionV1? ExecutionPromotion = null)
-{
-    public const string Shadow = "SHADOW";
-    public const string Execute = "EXECUTE";
-}
-
 public sealed record PolicyRuntimeState(
     string SoulId,
     string DeviceBindingId,
@@ -59,14 +44,15 @@ public sealed record VerifiedPolicyEvaluationContext(
 public interface IPolicyTrustProvider
 {
     ValueTask<VerifiedPolicyEvaluationContext> ResolveVerifiedContextAsync(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
+        ActionProposalV2 proposal,
+        ApprovalEvaluationRequestV1 request,
+        ActionExecutionPromotionV1? promotion,
         CancellationToken cancellationToken);
 }
 
 public interface IPolicyRuntimeStateSource
 {
-    ValueTask<PolicyRuntimeState> ReadVerifiedStateAsync(ActionProposalV1 proposal, CancellationToken cancellationToken);
+    ValueTask<PolicyRuntimeState> ReadVerifiedStateAsync(ActionProposalV2 proposal, CancellationToken cancellationToken);
 }
 
 internal sealed record VerifiedPolicyEvaluationResult(
@@ -159,42 +145,153 @@ internal static class PolicyEcdsaGuard
     }
 }
 
-public static class PolicyAuthorizationBinding
+/// <summary>
+/// Authenticates one evaluation request before any database access: exact binding
+/// to the v2 proposal commitment, the Control Plane request signature, and for
+/// EXECUTE the independently signed promotion bound to that same commitment.
+/// </summary>
+internal sealed class PolicyEvaluationRequestVerifier : IDisposable
 {
-    public const string ProposalDomain = "dps.policy-approval.action-proposal-sha256/v1";
+    private readonly object _sync = new();
+    private readonly ECDsa _publicKey;
+    private readonly ECDsa _promotionPublicKey;
 
-    public static string ComputeProposalSha256(ActionProposalV1 proposal)
+    internal PolicyEvaluationRequestVerifier(
+        ReadOnlySpan<byte> subjectPublicKeyInfo,
+        ReadOnlySpan<byte> promotionSubjectPublicKeyInfo)
     {
-        var snapshot = PolicyCanonicalization.SnapshotProposal(proposal);
-        return PolicyCanonicalHash.Compute(writer =>
+        _publicKey = ECDsa.Create();
+        _promotionPublicKey = ECDsa.Create();
+        try
         {
-            writer.Field(ProposalDomain);
-            writer.Field(snapshot.SchemaVersion);
-            writer.Field(snapshot.ContractId);
-            writer.Field(snapshot.ProducerModule);
-            writer.Field(snapshot.ProposalId);
-            writer.Field(snapshot.SoulId);
-            writer.Field(snapshot.DeviceBindingId);
-            writer.Field(snapshot.PlatformAccountId);
-            writer.Field(snapshot.TraceId);
-            writer.Field(snapshot.IdempotencyKey);
-            writer.Field(snapshot.OccurredAt);
-            writer.Field(snapshot.PrivacyClass);
-            writer.Field(snapshot.ActionKind);
-            writer.Field(snapshot.IsSideEffect);
-            writer.Field(snapshot.ShadowOnly);
-            writer.Field(snapshot.Parameters.Count);
-            foreach (var pair in snapshot.Parameters.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            PolicyEcdsaGuard.ImportP256SubjectPublicKeyInfo(
+                _publicKey, subjectPublicKeyInfo, nameof(subjectPublicKeyInfo));
+            PolicyEcdsaGuard.ImportP256SubjectPublicKeyInfo(
+                _promotionPublicKey,
+                promotionSubjectPublicKeyInfo,
+                nameof(promotionSubjectPublicKeyInfo));
+            PolicyEcdsaGuard.RequireDistinctPublicKeys(
+                _publicKey,
+                nameof(subjectPublicKeyInfo),
+                _promotionPublicKey,
+                nameof(promotionSubjectPublicKeyInfo));
+        }
+        catch
+        {
+            _publicKey.Dispose();
+            _promotionPublicKey.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Returns the signature-free idempotency commitment of an authentic request.</summary>
+    internal string Verify(
+        ActionProposalV2 proposal,
+        ApprovalEvaluationRequestV1 request,
+        ActionExecutionPromotionV1? promotion)
+    {
+        ArgumentNullException.ThrowIfNull(proposal);
+        ArgumentNullException.ThrowIfNull(request);
+        try { request.Validate(); }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
+        {
+            throw new UnauthorizedAccessException("Policy evaluation request contract is invalid.", exception);
+        }
+        var proposalSha256 = ActionProposalV2Canonical.ComputeSha256(proposal);
+        if (request.ProposalId != proposal.ProposalId
+            || !FixedSha256Equals(request.ProposalSha256, proposalSha256)
+            || !string.Equals(request.SoulId, proposal.SoulId, StringComparison.Ordinal)
+            || !string.Equals(request.DeviceBindingId, proposal.DeviceBindingId, StringComparison.Ordinal)
+            || !string.Equals(request.PlatformAccountId, proposal.PlatformAccountId, StringComparison.Ordinal)
+            || !string.Equals(request.TraceId, proposal.TraceId, StringComparison.Ordinal)
+            || !string.Equals(request.IdempotencyKey, proposal.IdempotencyKey, StringComparison.Ordinal)
+            || request.OccurredAt != proposal.OccurredAt)
+            throw new UnauthorizedAccessException("Policy evaluation request is not bound to the exact v2 proposal commitment, scope, and occurrence time.");
+        VerifySignature(
+            _publicKey,
+            ApprovalEvaluationRequestV1Canonical.CanonicalBytes(request),
+            request.SignatureBase64,
+            "Policy authorization signature verification failed.");
+        if (request.Mode == ApprovalEvaluationRequestV1.Shadow)
+        {
+            if (promotion is not null)
+                throw new UnauthorizedAccessException("A SHADOW evaluation cannot carry an execution promotion.");
+        }
+        else
+        {
+            if (promotion is null)
+                throw new UnauthorizedAccessException("An EXECUTE evaluation requires its bound execution promotion.");
+            try { promotion.Validate(); }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
             {
-                writer.Field(pair.Key);
-                writer.Field(pair.Value);
+                throw new UnauthorizedAccessException("Execution promotion contract is invalid.", exception);
             }
-            writer.Field(snapshot.EvidenceRefs.Count);
-            foreach (var evidenceReference in snapshot.EvidenceRefs.Order(StringComparer.Ordinal))
-            {
-                writer.Field(evidenceReference);
-            }
-        });
+            if (!FixedSha256Equals(
+                    request.ExecutionPromotionSha256!,
+                    ApprovalEvaluationRequestV1Canonical.ComputeExecutionPromotionSha256(promotion))
+                || promotion.ProposalId != proposal.ProposalId
+                || !string.Equals(promotion.SoulId, proposal.SoulId, StringComparison.Ordinal)
+                || !string.Equals(promotion.DeviceBindingId, proposal.DeviceBindingId, StringComparison.Ordinal)
+                || !string.Equals(promotion.PlatformAccountId, proposal.PlatformAccountId, StringComparison.Ordinal)
+                || !string.Equals(promotion.TraceId, proposal.TraceId, StringComparison.Ordinal)
+                || !string.Equals(promotion.IdempotencyKey, proposal.IdempotencyKey, StringComparison.Ordinal)
+                || !FixedSha256Equals(promotion.ProposalSha256, proposalSha256)
+                || !FixedSha256Equals(promotion.ReleaseBomSha256, request.ReleaseBomSha256)
+                || promotion.OccurredAt < proposal.OccurredAt)
+                throw new UnauthorizedAccessException("Execution promotion is not bound to the exact v2 proposal commitment, request, and Release BOM.");
+            VerifySignature(
+                _promotionPublicKey,
+                ActionExecutionPromotionV1Canonical.CanonicalBytes(promotion),
+                promotion.SignatureBase64,
+                "Independent execution-promotion signature verification failed.");
+        }
+        return ApprovalEvaluationRequestV1Canonical.ComputeCommitmentSha256(request);
+    }
+
+    private void VerifySignature(ECDsa key, byte[] canonical, string signatureBase64, string failure)
+    {
+        byte[]? signature = null;
+        try
+        {
+            signature = PolicyEcdsaGuard.DecodeCanonicalP1363Signature(signatureBase64);
+            bool verified;
+            lock (_sync)
+                verified = key.VerifyData(
+                    canonical,
+                    signature,
+                    HashAlgorithmName.SHA256,
+                    DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+            if (!verified) throw new UnauthorizedAccessException(failure);
+        }
+        finally
+        {
+            if (signature is not null) CryptographicOperations.ZeroMemory(signature);
+            CryptographicOperations.ZeroMemory(canonical);
+        }
+    }
+
+    internal static bool FixedSha256Equals(string left, string right)
+    {
+        byte[]? leftBytes = null;
+        byte[]? rightBytes = null;
+        try
+        {
+            leftBytes = Convert.FromHexString(left);
+            rightBytes = Convert.FromHexString(right);
+            return CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
+        }
+        catch (FormatException) { return false; }
+        finally
+        {
+            if (leftBytes is not null) CryptographicOperations.ZeroMemory(leftBytes);
+            if (rightBytes is not null) CryptographicOperations.ZeroMemory(rightBytes);
+        }
+    }
+
+    public void Dispose()
+    {
+        _publicKey.Dispose();
+        _promotionPublicKey.Dispose();
     }
 }
 
@@ -213,32 +310,34 @@ public sealed class DeterministicPolicyEvaluator
         StringComparer.Ordinal);
 
     public async ValueTask<ApprovalDecisionV1> EvaluateAsync(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
+        ActionProposalV2 proposal,
+        ApprovalEvaluationRequestV1 request,
+        ActionExecutionPromotionV1? promotion = null,
         CancellationToken cancellationToken = default)
-        => (await EvaluateVerifiedAsync(proposal, envelope, cancellationToken)).Decision;
+        => (await EvaluateVerifiedAsync(proposal, request, promotion, cancellationToken)).Decision;
 
     internal async ValueTask<VerifiedPolicyEvaluationResult> EvaluateVerifiedAsync(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
+        ActionProposalV2 proposal,
+        ApprovalEvaluationRequestV1 request,
+        ActionExecutionPromotionV1? promotion,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(proposal);
-        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(request);
         proposal = PolicyCanonicalization.SnapshotProposal(proposal);
-        if (string.IsNullOrWhiteSpace(envelope.SignatureBase64)) throw new UnauthorizedAccessException("Authenticated Control Plane authorization is required.");
-        var context = await _trustProvider.ResolveVerifiedContextAsync(proposal, envelope, cancellationToken);
+        if (string.IsNullOrWhiteSpace(request.SignatureBase64)) throw new UnauthorizedAccessException("Authenticated Control Plane authorization is required.");
+        var context = await _trustProvider.ResolveVerifiedContextAsync(proposal, request, promotion, cancellationToken);
         ArgumentNullException.ThrowIfNull(context);
         try { PolicyCanonicalization.RequireSha256(context.TrustEvidenceSha256, nameof(context.TrustEvidenceSha256)); }
         catch (ArgumentException exception) { throw new UnauthorizedAccessException("Trusted policy context evidence is invalid.", exception); }
-        if ((envelope.ExecutionPromotion is null) != (context.ExecutionPromotionSha256 is null))
-            throw new UnauthorizedAccessException("Trusted policy context promotion evidence does not match the signed envelope.");
+        if ((promotion is null) != (context.ExecutionPromotionSha256 is null))
+            throw new UnauthorizedAccessException("Trusted policy context promotion evidence does not match the signed request.");
         if (context.ExecutionPromotionSha256 is not null)
         {
             try { PolicyCanonicalization.RequireSha256(context.ExecutionPromotionSha256, nameof(context.ExecutionPromotionSha256)); }
             catch (ArgumentException exception) { throw new UnauthorizedAccessException("Trusted execution-promotion evidence is invalid.", exception); }
         }
-        if (context.ExecutionAuthorized && envelope.ExecutionPromotion is null)
+        if (context.ExecutionAuthorized && promotion is null)
             throw new UnauthorizedAccessException("Execution cannot be authorized without an independent promotion contract.");
         ApprovalContractGuard.RequireUtc(context.EvaluatedAt, nameof(context.EvaluatedAt));
         if (!string.Equals(proposal.SoulId, context.SoulId, StringComparison.Ordinal) || !string.Equals(proposal.DeviceBindingId, context.DeviceBindingId, StringComparison.Ordinal) || !string.Equals(proposal.PlatformAccountId, context.PlatformAccountId, StringComparison.Ordinal)) throw new UnauthorizedAccessException("SOUL-ISO-001: proposal and policy scope differ.");
@@ -248,7 +347,7 @@ public sealed class DeterministicPolicyEvaluator
 
         var reasons = new List<string>();
         if (!KnownPolicies.IsSubsetOf(enabledPolicies)) reasons.Add("REQUIRED_POLICY_DISABLED");
-        var promoted = context.ExecutionAuthorized && envelope.ExecutionPromotion is not null;
+        var promoted = context.ExecutionAuthorized && promotion is not null;
         if (proposal.ShadowOnly && !promoted) reasons.Add("SHADOW_ONLY");
         if (context.KillSwitchEnabled) reasons.Add("KILL_SWITCH_ACTIVE");
         if (context.RemainingRateBudget <= 0) reasons.Add("RATE_BUDGET_EXHAUSTED");
@@ -284,7 +383,7 @@ public sealed class DeterministicPolicyEvaluator
     }
 
     private static Guid DeterministicApprovalId(
-        ActionProposalV1 proposal,
+        ActionProposalV2 proposal,
         VerifiedPolicyEvaluationContext context,
         string decision)
     {
@@ -312,9 +411,7 @@ public sealed class DeterministicPolicyEvaluator
 
 public sealed class EcdsaPolicyTrustProvider : IPolicyTrustProvider, IDisposable
 {
-    private readonly object _sync = new();
-    private readonly ECDsa _publicKey;
-    private readonly ECDsa _promotionPublicKey;
+    private readonly PolicyEvaluationRequestVerifier _verifier;
     private readonly IPolicyRuntimeStateSource _runtimeStateSource;
 
     public EcdsaPolicyTrustProvider(
@@ -324,63 +421,24 @@ public sealed class EcdsaPolicyTrustProvider : IPolicyTrustProvider, IDisposable
     {
         ArgumentNullException.ThrowIfNull(runtimeStateSource);
         _runtimeStateSource = runtimeStateSource;
-        _publicKey = ECDsa.Create();
-        _promotionPublicKey = ECDsa.Create();
-        try
-        {
-            PolicyEcdsaGuard.ImportP256SubjectPublicKeyInfo(
-                _publicKey, subjectPublicKeyInfo, nameof(subjectPublicKeyInfo));
-            PolicyEcdsaGuard.ImportP256SubjectPublicKeyInfo(
-                _promotionPublicKey,
-                promotionSubjectPublicKeyInfo,
-                nameof(promotionSubjectPublicKeyInfo));
-            PolicyEcdsaGuard.RequireDistinctPublicKeys(
-                _publicKey,
-                nameof(subjectPublicKeyInfo),
-                _promotionPublicKey,
-                nameof(promotionSubjectPublicKeyInfo));
-        }
-        catch
-        {
-            _publicKey.Dispose();
-            _promotionPublicKey.Dispose();
-            throw;
-        }
+        _verifier = new PolicyEvaluationRequestVerifier(
+            subjectPublicKeyInfo,
+            promotionSubjectPublicKeyInfo);
     }
 
-    public async ValueTask<VerifiedPolicyEvaluationContext> ResolveVerifiedContextAsync(ActionProposalV1 proposal, PolicyEvaluationEnvelope envelope, CancellationToken cancellationToken)
+    public async ValueTask<VerifiedPolicyEvaluationContext> ResolveVerifiedContextAsync(
+        ActionProposalV2 proposal,
+        ApprovalEvaluationRequestV1 request,
+        ActionExecutionPromotionV1? promotion,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         proposal = PolicyCanonicalization.SnapshotProposal(proposal);
-        ApprovalContractGuard.RequireUtc(envelope.ValidUntil, nameof(envelope.ValidUntil));
-        try
-        {
-            PolicyCanonicalization.RequireSha256(envelope.ProposalSha256, nameof(envelope.ProposalSha256));
-            PolicyCanonicalization.RequireSha256(envelope.ReleaseBomSha256, nameof(envelope.ReleaseBomSha256));
-            PolicyCanonicalization.RequireStrictUtf8(envelope.CallerModule, envelope.AuthScope, envelope.RequestedMode);
-        }
-        catch (ArgumentException exception) { throw new UnauthorizedAccessException("Policy envelope commitments are invalid.", exception); }
-        if (envelope.RequestedMode is not (PolicyEvaluationEnvelope.Shadow or PolicyEvaluationEnvelope.Execute)) throw new UnauthorizedAccessException("Unknown policy execution mode fails closed.");
-        if (!string.Equals(envelope.CallerModule, "control-plane-host", StringComparison.Ordinal)
-            || !string.Equals(envelope.AuthScope, "policy:evaluate", StringComparison.Ordinal)
-            || envelope.ProposalId != proposal.ProposalId
-            || envelope.ValidUntil <= proposal.OccurredAt)
-            throw new UnauthorizedAccessException("Policy envelope caller, scope, proposal, or lifetime is invalid.");
-        if (!FixedSha256Equals(envelope.ProposalSha256, PolicyAuthorizationBinding.ComputeProposalSha256(proposal))) throw new UnauthorizedAccessException("Policy envelope is not bound to the exact proposal payload.");
-        byte[]? signature = null;
+        _ = _verifier.Verify(proposal, request, promotion);
         byte[]? canonical = null;
         try
         {
-            signature = PolicyEcdsaGuard.DecodeCanonicalP1363Signature(envelope.SignatureBase64);
-            canonical = CanonicalBytes(envelope);
-            bool verified;
-            lock (_sync)
-                verified = _publicKey.VerifyData(
-                    canonical,
-                    signature,
-                    HashAlgorithmName.SHA256,
-                    DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
-            if (!verified) throw new UnauthorizedAccessException("Policy authorization signature verification failed.");
+            canonical = ApprovalEvaluationRequestV1Canonical.CanonicalBytes(request);
             var state = await _runtimeStateSource.ReadVerifiedStateAsync(proposal, cancellationToken);
             ArgumentNullException.ThrowIfNull(state);
             ApprovalContractGuard.RequireUtc(state.EvaluatedAt, nameof(state.EvaluatedAt));
@@ -388,32 +446,26 @@ public sealed class EcdsaPolicyTrustProvider : IPolicyTrustProvider, IDisposable
             PolicyCanonicalization.RequireSha256(state.ReleaseBomSha256, nameof(state.ReleaseBomSha256));
             PolicyCanonicalization.RequireSha256(state.RuntimeStateSha256, nameof(state.RuntimeStateSha256));
             if (state.RuntimeRevision <= 0) throw new UnauthorizedAccessException("Trusted policy runtime revision is invalid.");
-            if (state.EvaluatedAt >= envelope.ValidUntil)
+            if (state.EvaluatedAt >= request.ValidUntil)
                 throw new UnauthorizedAccessException("Policy authorization expired before trusted database time.");
             if (state.EvaluatedAt >= state.RuntimeValidUntil)
                 throw new UnauthorizedAccessException("Policy runtime state expired before trusted database time.");
-            if (!FixedSha256Equals(envelope.ReleaseBomSha256, state.ReleaseBomSha256)) throw new UnauthorizedAccessException("The signed release BOM is not the active policy runtime BOM.");
+            if (!PolicyEvaluationRequestVerifier.FixedSha256Equals(request.ReleaseBomSha256, state.ReleaseBomSha256)) throw new UnauthorizedAccessException("The signed release BOM is not the active policy runtime BOM.");
             var policies = new HashSet<string>(state.EnabledPolicyIds, StringComparer.Ordinal);
             if (policies.Count != state.EnabledPolicyIds.Count) throw new UnauthorizedAccessException("Trusted policy state exposes inconsistent policy cardinality.");
             string? executionPromotionSha256 = null;
-            var authorizationValidUntil = envelope.ValidUntil;
-            if (envelope.RequestedMode == PolicyEvaluationEnvelope.Shadow
-                && envelope.ExecutionPromotion is not null)
-                throw new UnauthorizedAccessException("A SHADOW evaluation cannot carry an execution promotion.");
-            if (envelope.RequestedMode == PolicyEvaluationEnvelope.Execute
-                && envelope.ExecutionPromotion is not null)
+            var authorizationValidUntil = request.ValidUntil;
+            if (promotion is not null)
             {
-                executionPromotionSha256 = VerifyExecutionPromotion(
-                    proposal,
-                    envelope,
-                    state,
-                    envelope.ExecutionPromotion);
-                if (envelope.ExecutionPromotion.ValidUntil < authorizationValidUntil)
-                    authorizationValidUntil = envelope.ExecutionPromotion.ValidUntil;
+                if (promotion.ExpectedRuntimeRevision != state.RuntimeRevision
+                    || promotion.OccurredAt > state.EvaluatedAt
+                    || state.EvaluatedAt >= promotion.ValidUntil)
+                    throw new UnauthorizedAccessException("Execution promotion is not bound to the exact runtime generation and database time.");
+                executionPromotionSha256 = ActionExecutionPromotionV1Canonical.ComputeSignedSha256(promotion);
+                if (promotion.ValidUntil < authorizationValidUntil)
+                    authorizationValidUntil = promotion.ValidUntil;
             }
-            var executionAuthorized = envelope.RequestedMode == PolicyEvaluationEnvelope.Execute
-                && executionPromotionSha256 is not null
-                && state.ExecutionEnabled;
+            var executionAuthorized = executionPromotionSha256 is not null && state.ExecutionEnabled;
             var evidence = PolicyCanonicalHash.Compute(writer =>
             {
                 writer.Field("dps.policy-approval.trust-evidence-sha256/v1");
@@ -459,104 +511,9 @@ public sealed class EcdsaPolicyTrustProvider : IPolicyTrustProvider, IDisposable
         }
         finally
         {
-            if (signature is not null) CryptographicOperations.ZeroMemory(signature);
             if (canonical is not null) CryptographicOperations.ZeroMemory(canonical);
         }
     }
 
-    public static byte[] CanonicalBytes(PolicyEvaluationEnvelope envelope)
-    {
-        ArgumentNullException.ThrowIfNull(envelope);
-        return PolicyCanonicalHash.Bytes(writer =>
-        {
-            writer.Field("dps.policy-approval.evaluation-envelope/v1");
-            writer.Field(envelope.CallerModule);
-            writer.Field(envelope.AuthScope);
-            writer.Field(envelope.ProposalId);
-            writer.Field(envelope.ProposalSha256);
-            writer.Field(envelope.ReleaseBomSha256);
-            writer.Field(envelope.ValidUntil);
-            writer.Field(envelope.RequestedMode);
-            writer.NullableField(
-                envelope.ExecutionPromotion is null
-                    ? null
-                        : ActionExecutionPromotionV1Canonical.ComputeSignedSha256(envelope.ExecutionPromotion));
-        });
-    }
-
-    private string VerifyExecutionPromotion(
-        ActionProposalV1 proposal,
-        PolicyEvaluationEnvelope envelope,
-        PolicyRuntimeState state,
-        ActionExecutionPromotionV1 promotion)
-    {
-        try { promotion.Validate(); }
-        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidOperationException)
-        {
-            throw new UnauthorizedAccessException("Execution promotion contract is invalid.", exception);
-        }
-        var expectedProposalSha256 = PolicyAuthorizationBinding.ComputeProposalSha256(proposal);
-        if (promotion.ProposalId != proposal.ProposalId
-            || !string.Equals(promotion.SoulId, proposal.SoulId, StringComparison.Ordinal)
-            || !string.Equals(promotion.DeviceBindingId, proposal.DeviceBindingId, StringComparison.Ordinal)
-            || !string.Equals(promotion.PlatformAccountId, proposal.PlatformAccountId, StringComparison.Ordinal)
-            || !string.Equals(promotion.TraceId, proposal.TraceId, StringComparison.Ordinal)
-            || !string.Equals(promotion.IdempotencyKey, proposal.IdempotencyKey, StringComparison.Ordinal)
-            || !FixedSha256Equals(promotion.ProposalSha256, expectedProposalSha256)
-            || !FixedSha256Equals(promotion.ProposalSha256, envelope.ProposalSha256)
-            || !FixedSha256Equals(promotion.ReleaseBomSha256, envelope.ReleaseBomSha256)
-            || !FixedSha256Equals(promotion.ReleaseBomSha256, state.ReleaseBomSha256)
-            || promotion.ExpectedRuntimeRevision != state.RuntimeRevision
-            || promotion.OccurredAt < proposal.OccurredAt
-            || promotion.OccurredAt > state.EvaluatedAt
-            || state.EvaluatedAt >= promotion.ValidUntil)
-            throw new UnauthorizedAccessException("Execution promotion is not bound to the exact proposal, runtime generation, database time, and Release BOM.");
-
-        byte[]? signature = null;
-        byte[]? canonical = null;
-        try
-        {
-            signature = PolicyEcdsaGuard.DecodeCanonicalP1363Signature(promotion.SignatureBase64);
-            canonical = ActionExecutionPromotionV1Canonical.CanonicalBytes(promotion);
-            bool verified;
-            lock (_sync)
-                verified = _promotionPublicKey.VerifyData(
-                    canonical,
-                    signature,
-                    HashAlgorithmName.SHA256,
-                    DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
-            if (!verified)
-                throw new UnauthorizedAccessException("Independent execution-promotion signature verification failed.");
-            return ActionExecutionPromotionV1Canonical.ComputeSignedSha256(promotion);
-        }
-        finally
-        {
-            if (signature is not null) CryptographicOperations.ZeroMemory(signature);
-            if (canonical is not null) CryptographicOperations.ZeroMemory(canonical);
-        }
-    }
-
-    private static bool FixedSha256Equals(string left, string right)
-    {
-        byte[]? leftBytes = null;
-        byte[]? rightBytes = null;
-        try
-        {
-            leftBytes = Convert.FromHexString(left);
-            rightBytes = Convert.FromHexString(right);
-            return CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
-        }
-        catch (FormatException) { return false; }
-        finally
-        {
-            if (leftBytes is not null) CryptographicOperations.ZeroMemory(leftBytes);
-            if (rightBytes is not null) CryptographicOperations.ZeroMemory(rightBytes);
-        }
-    }
-
-    public void Dispose()
-    {
-        _publicKey.Dispose();
-        _promotionPublicKey.Dispose();
-    }
+    public void Dispose() => _verifier.Dispose();
 }

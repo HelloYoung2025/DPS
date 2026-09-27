@@ -183,7 +183,8 @@
         "type": "Project",
         "dependencies": {
           "Dps.ControlPlaneHost.Contracts": "[0.4.0, )",
-          "Dps.PolicyApproval.Contracts": "[0.6.0, )",
+          "Dps.Planner.Contracts": "[0.2.0, )",
+          "Dps.PolicyApproval.Contracts": "[0.8.0, )",
           "Dps.SoulRegistry.Contracts": "[0.1.0, )",
           "Npgsql": "[10.0.3, )"
         }
@@ -200,6 +201,9 @@
         }
       },
       "dps.memoryeventledger.contracts": {
+        "type": "Project"
+      },
+      "dps.planner.contracts": {
         "type": "Project"
       },
       "dps.policyapproval.contracts": {
