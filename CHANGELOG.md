@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-09-14
 
+### FIX-M16-M26 PostgreSQL 18.4 defect repair
+
+- `factory-evidence-ledger` 0.2.1: migration `002` now requires the contract's 20 `upgrade.event/v1` keys in both the append function and the stored-event constraint (previously 21), and the role-attribute test expects PostgreSQL's `true`/`false` text.
+- `factory-artifact-builder` 0.2.1: the build-identity constraint expectation now equals PostgreSQL 18.4's exact catalog output for migration v1, including its `NOT NULL` constraint rows.
+- It authorizes no release or activation.
+
 ### P17A/P17B mainline integration
 
 - This merge integrates only P17A and P17B (`fede545`) into mainline `afb4f9b`; both sides' changelog entries are kept verbatim.

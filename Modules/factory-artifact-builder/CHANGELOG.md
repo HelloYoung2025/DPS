@@ -9,6 +9,7 @@
 - Added a v1 Schema annotation for the receipt-idempotency derivation and synchronized the reciprocal Release Controller communication edge.
 - Re-attested the PostgreSQL catalog with explicit constraint names, exact definitions, a complete one-index allowlist, and zero column ACLs; weakened checks, extra indexes, or column grants now fail closed.
 - Added unit and real-PostgreSQL adversarial cases for column ACL drift, weakened CHECK constraints, and extra indexes. The weakened-CHECK test restores the exact constraint in `finally`; real PostgreSQL 18.4 remains a required external gate.
+- Replaced the expected build-identity constraint catalog with the exact PostgreSQL 18.4 `pg_get_constraintdef` output for migration v1, including the ten PostgreSQL 18 `NOT NULL` constraint rows. The comparison remains exact; the builder version stays `0.2.1` because the Release consumer pins that identity.
 
 ## 0.2.0 - Proposed
 

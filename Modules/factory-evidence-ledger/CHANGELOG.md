@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - Proposed
+
+- Corrected the two `upgrade.event/v1` key-count literals in PostgreSQL migration `002` (the `append_upgrade_event` shape check and `upgrade_event_projected_json_ck`) from 21 to the contract's 20. Previously every valid 20-key event was rejected, while a 21-key event carrying one non-contract member passed both checks.
+- A database that already applied the earlier `002` converges by re-running `001` and then `002` in order. If any stored `event_json` does not have exactly 20 keys, re-adding the constraint fails; stop and review those rows under the operations rules for existing rows. Never weaken the constraint.
+- Corrected the real-PostgreSQL role-attribute expectation to PostgreSQL's `boolean::text` output (`true`/`false`) produced by `||`; the migration's role attributes are unchanged.
+- Added a real-PostgreSQL regression proving a 20-key event appends while 19-key and 21-key events are rejected by the database shape check.
+
 ## 0.2.0 - Proposed
 
 - Preserved the public `upgrade.event.append/v1` and `upgrade.event/v1` schema bytes while adding a documented internal detached-auth envelope.

@@ -116,7 +116,12 @@ _EXPECTED_BUILD_IDENTITY_CONSTRAINTS = (
     (
         "build_identity_claim_artifact_sha256_check", "c", True, False, False,
         True, 0, True, "5",
-        "CHECK (((artifact_sha256)::text ~ '^[a-f0-9]{64}$'::text))",
+        "CHECK ((artifact_sha256 ~ '^[a-f0-9]{64}$'::text))",
+    ),
+    (
+        "build_identity_claim_artifact_sha256_not_null", "n", True, False, False,
+        True, 0, True, "5",
+        "NOT NULL artifact_sha256",
     ),
     (
         "build_identity_claim_build_id_check", "c", True, False, False,
@@ -124,19 +129,44 @@ _EXPECTED_BUILD_IDENTITY_CONSTRAINTS = (
         "CHECK ((build_id ~ '^[a-z0-9][a-z0-9._:-]{7,127}$'::text))",
     ),
     (
+        "build_identity_claim_build_id_not_null", "n", True, False, False,
+        True, 0, True, "1",
+        "NOT NULL build_id",
+    ),
+    (
         "build_identity_claim_claim_sha256_check", "c", True, False, False,
         True, 0, True, "2",
-        "CHECK (((claim_sha256)::text ~ '^[a-f0-9]{64}$'::text))",
+        "CHECK ((claim_sha256 ~ '^[a-f0-9]{64}$'::text))",
+    ),
+    (
+        "build_identity_claim_claim_sha256_not_null", "n", True, False, False,
+        True, 0, True, "2",
+        "NOT NULL claim_sha256",
+    ),
+    (
+        "build_identity_claim_claimed_at_not_null", "n", True, False, False,
+        True, 0, True, "10",
+        "NOT NULL claimed_at",
     ),
     (
         "build_identity_claim_decision_sha256_check", "c", True, False, False,
         True, 0, True, "4",
-        "CHECK (((decision_sha256)::text ~ '^[a-f0-9]{64}$'::text))",
+        "CHECK ((decision_sha256 ~ '^[a-f0-9]{64}$'::text))",
+    ),
+    (
+        "build_identity_claim_decision_sha256_not_null", "n", True, False, False,
+        True, 0, True, "4",
+        "NOT NULL decision_sha256",
     ),
     (
         "build_identity_claim_integration_commit_check", "c", True, False, False,
         True, 0, True, "9",
-        "CHECK (((integration_commit)::text ~ '^[a-f0-9]{40}$'::text))",
+        "CHECK ((integration_commit ~ '^[a-f0-9]{40}$'::text))",
+    ),
+    (
+        "build_identity_claim_integration_commit_not_null", "n", True, False, False,
+        True, 0, True, "9",
+        "NOT NULL integration_commit",
     ),
     (
         "build_identity_claim_module_id_check", "c", True, False, False,
@@ -144,9 +174,19 @@ _EXPECTED_BUILD_IDENTITY_CONSTRAINTS = (
         "CHECK ((module_id ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::text))",
     ),
     (
+        "build_identity_claim_module_id_not_null", "n", True, False, False,
+        True, 0, True, "7",
+        "NOT NULL module_id",
+    ),
+    (
         "build_identity_claim_module_version_check", "c", True, False, False,
         True, 0, True, "8",
         "CHECK ((module_version ~ '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$'::text))",
+    ),
+    (
+        "build_identity_claim_module_version_not_null", "n", True, False, False,
+        True, 0, True, "8",
+        "NOT NULL module_version",
     ),
     (
         "build_identity_claim_pkey", "p", True, False, False,
@@ -155,12 +195,22 @@ _EXPECTED_BUILD_IDENTITY_CONSTRAINTS = (
     (
         "build_identity_claim_request_sha256_check", "c", True, False, False,
         True, 0, True, "3",
-        "CHECK (((request_sha256)::text ~ '^[a-f0-9]{64}$'::text))",
+        "CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))",
+    ),
+    (
+        "build_identity_claim_request_sha256_not_null", "n", True, False, False,
+        True, 0, True, "3",
+        "NOT NULL request_sha256",
     ),
     (
         "build_identity_claim_source_tree_sha256_check", "c", True, False, False,
         True, 0, True, "6",
-        "CHECK (((source_tree_sha256)::text ~ '^[a-f0-9]{64}$'::text))",
+        "CHECK ((source_tree_sha256 ~ '^[a-f0-9]{64}$'::text))",
+    ),
+    (
+        "build_identity_claim_source_tree_sha256_not_null", "n", True, False, False,
+        True, 0, True, "6",
+        "NOT NULL source_tree_sha256",
     ),
 )
 _EXPECTED_BUILD_IDENTITY_INDEXES = (

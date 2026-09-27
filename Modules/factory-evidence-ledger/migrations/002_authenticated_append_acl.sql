@@ -186,7 +186,7 @@ BEGIN
     ) THEN
         ALTER TABLE factory_evidence.upgrade_event ADD CONSTRAINT upgrade_event_projected_json_ck CHECK (
             jsonb_typeof(event_json) = 'object'
-            AND factory_evidence.jsonb_object_key_count(event_json) = 21
+            AND factory_evidence.jsonb_object_key_count(event_json) = 20
             AND event_json ->> 'schema_version' = '1.0.0'
             AND event_json ->> 'contract_id' = 'upgrade.event/v1'
             AND event_json ->> 'producer_module' = 'factory-evidence-ledger'
@@ -483,7 +483,7 @@ BEGIN
             'stream_id','expected_sequence','event_type','payload','payload_sha256'
        ])
        OR jsonb_typeof(p_event_json) <> 'object'
-       OR (SELECT count(*) FROM jsonb_object_keys(p_event_json)) <> 21
+       OR (SELECT count(*) FROM jsonb_object_keys(p_event_json)) <> 20
        OR NOT (p_event_json ?& ARRAY[
             'schema_version','contract_id','producer_module','soul_id','device_binding_id',
             'platform_account_id','trace_id','idempotency_key','occurred_at','privacy_class',

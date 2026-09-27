@@ -3,7 +3,7 @@
   "module": {
     "id": "factory-evidence-ledger",
     "name": "Factory Evidence Ledger",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "description": "Authenticated exact-byte append, append-only storage, redacted conflict quarantine, and full-field upgrade-event replay.",
     "lifecycle": "proposed",
     "runtimeState": "proposed",

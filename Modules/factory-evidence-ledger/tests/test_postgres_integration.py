@@ -322,6 +322,48 @@ class PostgreSQL18IntegrationTests(unittest.TestCase):
             connection.close()
         self.assertEqual([], EvidenceLedger(self.repository(), self.authority).read_stream(attacked_stream))
 
+    def test_database_event_shape_requires_exact_contract_key_count(self):
+        seed_ledger = EvidenceLedger(self.repository(), self.authority)
+        valid_event = self.append(
+            seed_ledger,
+            command(
+                f"shape-seed-{uuid.uuid4().hex}",
+                {"from_state": "REQUESTED", "to_state": "SCOPE_RESOLVED"},
+                0,
+                "shape-seed-001",
+            ),
+        )
+        self.assertEqual(20, len(valid_event))
+        missing_member = dict(valid_event)
+        del missing_member["append_status"]
+        extra_member = dict(valid_event, unexpected_member=True)
+        attacked_stream = f"shape-attack-{uuid.uuid4().hex}"
+        for label, event in (("19", missing_member), ("21", extra_member)):
+            with self.subTest(keys=label):
+                raw = canonical_bytes(
+                    command(
+                        attacked_stream,
+                        {"from_state": "REQUESTED", "to_state": "SCOPE_RESOLVED"},
+                        0,
+                        f"shape-attack-{label}",
+                    )
+                )
+                auth = authorization(raw, self.auth_key, self.auth_epoch).decode("utf-8")
+                connection = psycopg.connect(RUNTIME_URI)
+                cursor = connection.cursor()
+                try:
+                    with self.assertRaisesRegex(psycopg.Error, "shape is invalid"):
+                        cursor.execute(
+                            "SELECT append_status, event_json "
+                            "FROM factory_evidence.append_upgrade_event(%s, %s::jsonb, %s::jsonb)",
+                            (raw, json.dumps(event), auth),
+                        )
+                    connection.rollback()
+                finally:
+                    cursor.close()
+                    connection.close()
+        self.assertEqual([], EvidenceLedger(self.repository(), self.authority).read_stream(attacked_stream))
+
     def test_migration_identity_cannot_silently_mutate_or_truncate_ledger_data(self):
         stream_id = f"migration-guard-{uuid.uuid4().hex}"
         ledger = EvidenceLedger(self.repository(), self.authority)
@@ -357,9 +399,9 @@ class PostgreSQL18IntegrationTests(unittest.TestCase):
         ).stdout.splitlines()
         self.assertEqual(
             [
-                "dps_factory_evidence_admin:t:f:f:f:f:f:f",
-                "dps_factory_evidence_owner:f:f:f:f:f:f:f",
-                "dps_factory_evidence_runtime:t:f:f:f:f:f:f",
+                "dps_factory_evidence_admin:true:false:false:false:false:false:false",
+                "dps_factory_evidence_owner:false:false:false:false:false:false:false",
+                "dps_factory_evidence_runtime:true:false:false:false:false:false:false",
             ],
             rows,
         )
