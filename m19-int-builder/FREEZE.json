@@ -1,0 +1,319 @@
+{
+  "unit": "M19-INT",
+  "role": "Builder",
+  "session": "local_f7ab99e5-a6df-4025-a4d1-f1a467633735",
+  "transcript": "7b06ddb4-4560-495f-af47-d47c65eada0e.jsonl",
+  "frozen_at": "2026-09-27T16:00Z",
+  "repository_clone": "/Users/younghu/Documents/ZennoDroid_DSP/dps-air/units/m19-int/builder/DSP_ZD",
+  "branch": "codex/int-fix-p04f-199b209",
+  "commit": "df120166469e5044977227798932c07808b87571",
+  "tree": "963928ac1fffbd9bf8d50413014fe28d73a8c54e",
+  "parents": [
+    "6ba8ca001e011c2c9b3be87cd52fed114909e653",
+    "0b72b21dfcb0462e6893b7e4c555973ef68211a2"
+  ],
+  "parent_roles": {
+    "L=F (FIX-M16-M26)": "6ba8ca001e011c2c9b3be87cd52fed114909e653",
+    "R=X (P04F)": "0b72b21dfcb0462e6893b7e4c555973ef68211a2",
+    "merge_base=M18": "199b2097257d88112091ad2dd381c90345eedc8a"
+  },
+  "parent_commit_identity": "Owner 身份 (L, R, M18; not reproduced)",
+  "author": "M19-INT Builder <m19-int-builder@local.invalid>",
+  "committer": "M19-INT Builder <m19-int-builder@local.invalid>",
+  "diffs": {
+    "argv": "git diff --binary --full-index --no-renames --no-color --no-ext-diff --no-textconv <parent> df120166469e5044977227798932c07808b87571",
+    "env": "env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 PATH=/usr/bin:/bin",
+    "L..M19": {
+      "sha256": "8f66d710d075eaba27817faa7c6b0ddb4cbfd43f098cf997a7cb63309a55fa8d",
+      "bytes": 95412,
+      "file": "freeze-diff-6ba8ca0-df12016.patch"
+    },
+    "R..M19": {
+      "sha256": "de45a7354f9441bbfda98f37616ecc204893c71f329638aa23bfe6ecdd51c32e",
+      "bytes": 14630,
+      "file": "freeze-diff-0b72b21-df12016.patch"
+    }
+  },
+  "merge_check": {
+    "changed_vs_M18": 20,
+    "equals_union_L_R": true,
+    "non_changelog_path_mismatches": 0,
+    "auto_merge_conflicts": [
+      "CHANGELOG.md"
+    ],
+    "log": "b04-merge-verify.log"
+  },
+  "changelog": {
+    "blob": "303b04367d29b4ef1362aff357bad5730c99f213",
+    "sha256": "eef056d53b041cac4dbd927110c0721761d89a4ce50b7164a5e07488197d6834",
+    "bytes": 97491,
+    "resolution": "M18 bytes + L insert (531 B) + R insert (569 B) + integration note (295 B) after line 4; composed by environment/run/changelog.py with structural asserts"
+  },
+  "self_tests": {
+    "suites": {
+      "factory-evidence-ledger.unit": {
+        "rc": 0,
+        "ran": 11,
+        "result": "OK",
+        "log_sha256": "bac39d7677c9073854b473e0c750e1ad28844f4f07acd25b586a671a56dc11d9",
+        "parent_max": 11
+      },
+      "factory-evidence-ledger.crash-recovery": {
+        "rc": 0,
+        "ran": 7,
+        "result": "OK",
+        "log_sha256": "67c830a0fe9786ae475a884df092d49dde853c6a0f664595f9de5127124f6c36",
+        "parent_max": 7
+      },
+      "factory-evidence-ledger.contract": {
+        "rc": 0,
+        "ran": 7,
+        "result": "OK",
+        "log_sha256": "d76dc5ba119e4acf84e1aca4da8f17b5f49910748fd242c29ab779663e01aba4",
+        "parent_max": 7
+      },
+      "factory-artifact-builder.unit": {
+        "rc": 0,
+        "ran": 35,
+        "result": "OK",
+        "log_sha256": "5ee22e1bee373745734123c9c248e0b8c6beef6c7c39fceaf096207ab0783ed3",
+        "parent_max": 35
+      },
+      "factory-artifact-builder.contract": {
+        "rc": 0,
+        "ran": 6,
+        "result": "OK",
+        "log_sha256": "2d973986bcad693c9e87c14025011fa3779158dd1a11ecec1d599f8d43f914e2",
+        "parent_max": 6
+      },
+      "factory-control-plane-host.unit": {
+        "rc": 0,
+        "ran": 76,
+        "result": "OK",
+        "log_sha256": "dc3516ad3de98ad1c11606ad328ac0e57595c3acf768761f5faa535fa5acb136",
+        "parent_max": 76
+      },
+      "factory-control-plane-host.contract": {
+        "rc": 0,
+        "ran": 9,
+        "result": "OK",
+        "log_sha256": "4556440c1dbbf7dfb19aa043270cd91260e9e51342545ffeac0ce818af7fb721",
+        "parent_max": 9
+      },
+      "factory-control-plane-host.simulation": {
+        "rc": 0,
+        "ran": 2,
+        "result": "OK",
+        "log_sha256": "7c5da1716e72766d7533bc3da65b2eb0c186675181b98f497585a69dead5b12a",
+        "parent_max": 2
+      },
+      "factory-release-controller.unit": {
+        "rc": 0,
+        "ran": 19,
+        "result": "OK",
+        "log_sha256": "3843bddde14086c04ac21a2fae3d7017d95b84296c8fa2df09856a2b4a02ca0f",
+        "parent_max": 19
+      },
+      "factory-release-controller.candidate-gate": {
+        "rc": 0,
+        "ran": 18,
+        "result": "OK",
+        "log_sha256": "7950b8aaeff2c0b0c1b4d57bdcd75d8163bb4a1684ae0a83e91537b4943525d8",
+        "parent_max": 18
+      },
+      "factory-release-controller.contract": {
+        "rc": 0,
+        "ran": 14,
+        "result": "OK",
+        "log_sha256": "0d7e76b38824906a50d7df766594a4d1653623d6a3aba4299f2baf3b40c85f89",
+        "parent_max": 14
+      },
+      "factory-release-controller.simulation": {
+        "rc": 0,
+        "ran": 2,
+        "result": "OK",
+        "log_sha256": "a5945f7ff33f389c6ade7efff12292979c0730a60c647a1d6396ae1a8b614d1c",
+        "parent_max": 2
+      },
+      "factory-rollback-controller.unit": {
+        "rc": 0,
+        "ran": 12,
+        "result": "OK",
+        "log_sha256": "ba7045842f7043b94a2c7041c834fe9f85f3e205b1ecc5e19eedb24bb7d5353d",
+        "parent_max": 12
+      },
+      "factory-rollback-controller.contract": {
+        "rc": 0,
+        "ran": 4,
+        "result": "OK",
+        "log_sha256": "e71e3e853ffcd50feaf7f6d852180b82c8eee19ed9337b66a39bfcfbc5c90924",
+        "parent_max": 4
+      },
+      "factory-merge-controller.unit": {
+        "rc": 0,
+        "ran": 15,
+        "result": "OK",
+        "log_sha256": "bec4aad6d248b7f7289a36db243186a5d38f4db521a24a47f0a4b087c459d527",
+        "parent_max": 15
+      },
+      "factory-merge-controller.contract": {
+        "rc": 0,
+        "ran": 5,
+        "result": "OK",
+        "log_sha256": "287461e9f2071bcff8510ac4bad1f262c1b862f7738abf52ff8c9e1b9f5be7c0",
+        "parent_max": 5
+      },
+      "factory-upgrade-intake.unit": {
+        "rc": 0,
+        "ran": 16,
+        "result": "OK",
+        "log_sha256": "dd918636114365df50046143c2d68f25a21f71f2d081633a075f054cfa088ced",
+        "parent_max": 16
+      },
+      "factory-upgrade-intake.contract": {
+        "rc": 0,
+        "ran": 10,
+        "result": "OK",
+        "log_sha256": "73566e79adcf3b0b59672e3129b5076627fc68007d5b4ad7d0fdda8bc0b71a74",
+        "parent_max": 10
+      },
+      "factory-instruction-resolver.unit": {
+        "rc": 0,
+        "ran": 43,
+        "result": "OK",
+        "log_sha256": "afed8269e4a059b7f2299c01293dddaac7fe6db0321c3ae8e68eacf9ade07f98",
+        "parent_max": 43
+      },
+      "factory-instruction-resolver.contract": {
+        "rc": 0,
+        "ran": 20,
+        "result": "OK",
+        "log_sha256": "51c0545f67b9d0dee013d632e8ab4d74fb7a12c4e41a42c51dba3f35faf8baa2",
+        "parent_max": 20
+      },
+      "factory-impact-analyzer.unit": {
+        "rc": 0,
+        "ran": 12,
+        "result": "OK",
+        "log_sha256": "d94981e78c79b68d208e8ad1064a99f31a8bb60bdeb54975b4d97c0b85d8fb1d",
+        "parent_max": 12
+      },
+      "factory-impact-analyzer.contract": {
+        "rc": 0,
+        "ran": 11,
+        "result": "OK",
+        "log_sha256": "35d7e940c87cbe7c9d44409cc64acbb0266a92ca63bd1800764e8b8451187c37",
+        "parent_max": 11
+      },
+      "factory-worktree-manager.unit": {
+        "rc": 0,
+        "ran": 9,
+        "result": "OK",
+        "log_sha256": "95ff6a2f00441695cf08e5d2db56d39167264dec1fc14e328d40869614248452",
+        "parent_max": 9
+      },
+      "factory-worktree-manager.contract": {
+        "rc": 0,
+        "ran": 4,
+        "result": "OK",
+        "log_sha256": "11c94034df9a307a98bb234767cfb5374f611627d7a3bfdc8b9ee2adf50265df",
+        "parent_max": 4
+      },
+      "factory-worktree-manager.git-worktree": {
+        "rc": 0,
+        "ran": 4,
+        "result": "OK",
+        "log_sha256": "3c29a489930acfea27e37fe94f97769ed1d088a1af1c1045cbaefadc724f9965",
+        "parent_max": 4
+      },
+      "factory-trusted-runner.unit": {
+        "rc": 0,
+        "ran": 44,
+        "result": "OK",
+        "log_sha256": "512e7500c91c089ba56690ca7fbb95338798ac1d9d6263f5f3bf9b6ffb8cc178",
+        "parent_max": 44
+      },
+      "factory-trusted-runner.contract": {
+        "rc": 0,
+        "ran": 6,
+        "result": "OK",
+        "log_sha256": "a3fd8c67a7b84e68c89d16f8451d444106f96b8efbfc0e7b589718159118feb4",
+        "parent_max": 6
+      },
+      "factory-artifact-builder.postgresql18": {
+        "rc": 0,
+        "ran": 8,
+        "result": "OK",
+        "log_sha256": "62bcc231ff9e38f8ff5b0c8f2e063415e1a8c9ebccdce045e653331ad8a38c75",
+        "parent_max": 8
+      },
+      "factory-evidence-ledger.postgresql18": {
+        "rc": 0,
+        "ran": 6,
+        "result": "OK",
+        "log_sha256": "92be1d2d0fa8cae0850ca7d0f8c5791a28c02d992ea45c86a6cf5a7a09c34456",
+        "parent_max": 6
+      }
+    },
+    "not_run": {
+      "factory-control-plane-host.postgresql18": "neither parent ran it (WO-FIX §1.2; P04F no src/schema/Manifest change); WO-M19 §3.2(3)",
+      "factory-worktree-manager.postgresql18": "neither parent ran it; WO-M19 §3.2(3)"
+    },
+    "central_ci": {
+      "command": "python3.12 -m unittest discover -s Tests/ci -p 'test_*.py'",
+      "rc": 0,
+      "ran": 261,
+      "result": "OK",
+      "parent": "L 261 OK; R not run",
+      "log": "b08-central-ci.log"
+    },
+    "static": {
+      "generate_governance": "verified: 3, rc 0",
+      "validate_repo": "json=299 python=96 markdown=247, rc 0",
+      "diff_check": {
+        "M18..L": 0,
+        "M18..R": 0,
+        "L..M19": 0,
+        "R..M19": 0,
+        "cached_before_commit": 0
+      },
+      "governance_write_used": false
+    }
+  },
+  "per_turn_effort": {
+    "round1_selfcheck": "max/max (card inheritance, 8 records)",
+    "round2_preaccept": "medium (75 records)",
+    "round3_start": "medium (all records)",
+    "CLAUDE_CODE_EFFORT_LEVEL": "unset (15:00:51Z, 15:47:04Z)"
+  },
+  "secrets": {
+    "passwords": "6 TEST_ONLY roles, random; only environment/secrets/pgpass (0600); URI carries passfile= only; roles created with passwords via psql stdin",
+    "hmac_key_and_epoch": "0600 files; injected only into the M26 child env dict",
+    "leak_scan": "b12-leak-scan.log: 10 needles, positive control 1 hit, clone(+.git,Reports)/environment(excl secrets)/receipt 0 hits, commit message 0"
+  },
+  "postgresql": {
+    "version": "18.4 (180004)",
+    "source_sha256": "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094",
+    "listen": "127.0.0.1:56360",
+    "unix_socket": "disabled",
+    "auth": "scram-sha-256",
+    "started": "2026-09-27T15:58:41Z",
+    "stopped": "2026-09-27T15:59:06Z",
+    "listening_after": "none (56360-56369)"
+  },
+  "authority": {
+    "formal_level": "NONE",
+    "signed": false,
+    "verification_level": null,
+    "external_review": "NOT_RUN (Owner 2026-09-27 paused external review)",
+    "gate": "not run by Builder"
+  },
+  "report": {
+    "file": "REPORT.md",
+    "sha256": "d6587895912787aab293a06c5bbab705e79e7c2d1aac1e439bcb34c49d0897cc"
+  },
+  "evidence_sums": {
+    "file": "EVIDENCE_SHA256SUMS.txt",
+    "sha256": "705b90f3c54caa8b922d3a14817e59b54390e88c191d237ec92bfad5497a6297"
+  }
+}
